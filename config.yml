@@ -1,0 +1,44 @@
+roles:
+  reviewer:
+    description: "Senior code reviewer — finds bugs, security, correctness issues"
+    prompt_file: prompts/reviewer.txt
+  coder:
+    description: "Expert developer — applies fixes or rejects with reasoning"
+    prompt_file: prompts/coder.txt
+  judge:
+    description: "Final arbiter — evaluates all rounds, scores, verdict"
+    prompt_file: prompts/judge.txt
+
+models:
+  claude-opus:
+    provider: claude-cli
+    model: opus
+  claude-sonnet:
+    provider: claude-cli
+    model: sonnet
+  codex:
+    provider: codex-cli
+  qwen-local:
+    provider: openai-compat
+    base_url: http://localhost:8000
+    model: qwen3.5
+    max_tokens: 8192
+    temperature: 0.1
+  deepseek:
+    provider: openai-compat
+    base_url: https://api.deepseek.com
+    model: deepseek-coder
+    api_key_env: DEEPSEEK_API_KEY
+
+# Map roles to models (easily swappable)
+assignments:
+  reviewer: claude-opus
+  coder: qwen-local
+  judge: claude-opus
+
+# Pipeline settings
+pipeline:
+  max_rounds: 4
+  batch_max_lines: 6000
+  severity_threshold: warning  # error|warning|suggestion
+  auto_style_fix: true
