@@ -21,7 +21,7 @@ models:
   qwen-local:
     provider: openai-compat
     base_url: http://localhost:8000
-    model: qwen3.5
+    model: /Users/raullenstudio/.lmstudio/models/mlx-community/Qwen3.5-122B-A10B-8bit
     max_tokens: 8192
     temperature: 0.1
   deepseek:
@@ -32,20 +32,20 @@ models:
 
 # Map roles to models (easily swappable)
 assignments:
-  reviewer: claude-opus
+  reviewer: qwen-local
   coder: qwen-local
   judge: claude-opus
 
 # Pipeline settings
 pipeline:
   max_rounds: 4
-  batch_max_lines: 6000
+  batch_max_lines: 1500
   severity_threshold: warning  # error|warning|suggestion
   auto_style_fix: true
   # Multi-pass review (P0)
-  review_passes: 3           # number of review passes (1 = single pass)
-  review_min_votes: 2         # minimum passes that must flag a finding for high confidence
-  only_high_confidence: true  # only send high-confidence findings to coder
+  review_passes: 1           # number of review passes (1 = single pass)
+  review_min_votes: 1         # minimum passes that must flag a finding for high confidence
+  only_high_confidence: false # send all findings to coder
   # Static analysis pre-screening (P1)
   static_analysis: true        # run linters before LLM review
   # Layered review (P2) — mutually exclusive with multi-pass
@@ -53,4 +53,4 @@ pipeline:
   # Knowledge accumulation (P4)
   knowledge_accumulation: false # accumulate patterns across rounds
   # Smart grouping (P3) — requires: pip install -e '.[graph]'
-  smart_grouping: false        # use tree-sitter dependency graph for file batching
+  smart_grouping: true         # use tree-sitter dependency graph for file batching

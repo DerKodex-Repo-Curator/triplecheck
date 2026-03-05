@@ -75,11 +75,19 @@ def discover_files(
     return sorted(files)
 
 
-def load_files(paths: list[Path], target: Path) -> list[FileContent]:
-    """Load file contents, skipping files that can't be read."""
+def load_files(paths: list[Path], target: Path, max_size: int = 10 * 1024 * 1024) -> list[FileContent]:
+    """Load file contents, skipping files that can't be read.
+
+    Args:
+        paths: List of file paths to load
+        target: Target directory for relative paths
+        max_size: Maximum file size in bytes (default 10MB)
+    """
     result = []
     for p in paths:
         try:
+            if p.stat().st_size > max_size:
+                continue
             content = p.read_text(errors="replace")
             result.append(FileContent(
                 path=p.relative_to(target),
@@ -93,15 +101,16 @@ def load_files(paths: list[Path], target: Path) -> list[FileContent]:
 def batch_files(
     files: list[FileContent],
     max_lines: int = 6000,
+    max_files: int = 5,
 ) -> list[list[FileContent]]:
-    """Split files into batches that fit within line limits."""
+    """Split files into batches that fit within line and file count limits."""
     batches: list[list[FileContent]] = []
     current_batch: list[FileContent] = []
     current_lines = 0
 
     for f in files:
         lines = f.content.count("\n") + 1
-        if current_lines + lines > max_lines and current_batch:
+        if (current_lines + lines > max_lines or len(current_batch) >= max_files) and current_batch:
             batches.append(current_batch)
             current_batch = []
             current_lines = 0
@@ -118,6 +127,7 @@ def smart_batch_files(
     files: list[FileContent],
     target: Path,
     max_lines: int = 6000,
+    max_files: int = 5,
 ) -> list[list[FileContent]]:
     """Batch files using dependency graph when available, fallback to line count.
 
@@ -126,12 +136,12 @@ def smart_batch_files(
     """
     try:
         from code_review.code_graph import smart_batch
-        result = smart_batch(files, target, max_lines)
+        result = smart_batch(files, target, max_lines, max_files)
         click.echo(f"    Smart grouping: {len(result)} batches (dependency-aware)")
         return result
     except ImportError:
         click.echo("    Smart grouping unavailable (install with: pip install -e '.[graph]')")
-        return batch_files(files, max_lines)
+        return batch_files(files, max_lines, max_files)
     except Exception as e:
         click.echo(f"    Smart grouping failed ({e}), falling back to line-count batching")
-        return batch_files(files, max_lines)
+        return batch_files(files, max_lines, max_files)

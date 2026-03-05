@@ -146,6 +146,16 @@ class ReviewRound:
             "ci_output": self.ci_output,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> ReviewRound:
+        return cls(
+            round_number=d.get("round_number", 0),
+            findings=[Finding.from_dict(f) for f in d.get("findings", [])],
+            fixes=[],  # Fixes aren't needed for resume (no original/fixed content)
+            ci_passed=d.get("ci_passed"),
+            ci_output=d.get("ci_output", ""),
+        )
+
 
 @dataclass
 class ReviewSession:
@@ -169,3 +179,42 @@ class ReviewSession:
         if self.verdict:
             d["verdict"] = self.verdict.to_dict()
         return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> ReviewSession:
+        verdict = Verdict.from_dict(d["verdict"]) if d.get("verdict") else None
+        return cls(
+            session_id=d.get("session_id", uuid.uuid4().hex[:12]),
+            target=d.get("target", ""),
+            started_at=d.get("started_at", ""),
+            config_snapshot=d.get("config_snapshot", {}),
+            rounds=[ReviewRound.from_dict(r) for r in d.get("rounds", [])],
+            verdict=verdict,
+            status=d.get("status", "completed"),
+        )
+
+
+@dataclass
+class AggregatedReport:
+    scan_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    plan: dict = field(default_factory=dict)
+    unit_sessions: list[ReviewSession] = field(default_factory=list)
+    unit_names: list[str] = field(default_factory=list)  # Parallel to unit_sessions
+    aggregate_score: float = 0.0
+    total_findings: int = 0
+    total_fixes: int = 0
+    category_breakdown: dict[str, int] = field(default_factory=dict)
+    status: str = "running"  # running | completed | failed
+
+    def to_dict(self) -> dict:
+        return {
+            "scan_id": self.scan_id,
+            "plan": self.plan,
+            "unit_sessions": [s.to_dict() for s in self.unit_sessions],
+            "unit_names": self.unit_names,
+            "aggregate_score": self.aggregate_score,
+            "total_findings": self.total_findings,
+            "total_fixes": self.total_fixes,
+            "category_breakdown": self.category_breakdown,
+            "status": self.status,
+        }

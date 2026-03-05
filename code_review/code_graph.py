@@ -89,15 +89,15 @@ class CodeGraph:
 def _get_python_parser():
     """Create a tree-sitter parser for Python."""
     _ensure_deps()
-    parser = _ts.Parser(_ts_python.language())
-    return parser
+    lang = _ts.Language(_ts_python.language())
+    return _ts.Parser(lang)
 
 
 def _get_go_parser():
     """Create a tree-sitter parser for Go."""
     _ensure_deps()
-    parser = _ts.Parser(_ts_go.language())
-    return parser
+    lang = _ts.Language(_ts_go.language())
+    return _ts.Parser(lang)
 
 
 def _node_text(node, source: bytes) -> str:
@@ -330,6 +330,7 @@ def smart_batch(
     files: list[FileContent],
     target: Path,
     max_lines: int = 6000,
+    max_files: int = 5,
 ) -> list[list[FileContent]]:
     """Batch files by dependency subgraph instead of just line count.
 
@@ -374,11 +375,13 @@ def smart_batch(
     current_batch: list[FileContent] = []
     current_lines = 0
 
-    for comp_id in sorted(component_files.keys()):
+    for comp_id in sorted(component_files.keys(),
+                          key=lambda c: sum(f.content.count("\n") + 1 for f in component_files[c]),
+                          reverse=True):
         comp_files = component_files[comp_id]
         comp_lines = sum(f.content.count("\n") + 1 for f in comp_files)
 
-        if comp_lines > max_lines:
+        if comp_lines > max_lines or len(comp_files) > max_files:
             # Component too large — split it
             if current_batch:
                 batches.append(current_batch)
@@ -387,13 +390,13 @@ def smart_batch(
             # Add files from this component one by one
             for f in comp_files:
                 f_lines = f.content.count("\n") + 1
-                if current_lines + f_lines > max_lines and current_batch:
+                if (current_lines + f_lines > max_lines or len(current_batch) >= max_files) and current_batch:
                     batches.append(current_batch)
                     current_batch = []
                     current_lines = 0
                 current_batch.append(f)
                 current_lines += f_lines
-        elif current_lines + comp_lines > max_lines:
+        elif current_lines + comp_lines > max_lines or len(current_batch) + len(comp_files) > max_files:
             if current_batch:
                 batches.append(current_batch)
             current_batch = list(comp_files)

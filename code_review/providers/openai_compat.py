@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 
+import click
 import httpx
 
 from code_review.providers.base import BaseProvider
@@ -24,24 +26,58 @@ class OpenAICompatProvider(BaseProvider):
         api_key_env = config.get("api_key_env", "")
         self.api_key = os.environ.get(api_key_env, "no-key") if api_key_env else "no-key"
 
-    def _chat(self, system: str, user: str) -> str:
+    def _chat(self, system: str, user: str, retries: int = 3, prefill: str = "") -> str:
         url = f"{self.base_url}/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        if prefill:
+            messages.append({"role": "assistant", "content": prefill})
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "messages": messages,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
         }
-        resp = httpx.post(url, json=payload, headers=headers, timeout=300)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        for attempt in range(1, retries + 1):
+            try:
+                resp = httpx.post(url, json=payload, headers=headers, timeout=900)
+                resp.raise_for_status()
+                data = resp.json()
+                try:
+                    return data["choices"][0]["message"]["content"]
+                except (KeyError, IndexError, TypeError) as e:
+                    click.echo(f"      [ERROR] Unexpected API response structure: {e}")
+                    click.echo(f"      [DEBUG] Response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                    raise RuntimeError(f"Malformed API response: {e}") from e
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                body = e.response.text[:300]
+                # Don't retry on 504 (gateway timeout) — payload is likely too large
+                retryable = status >= 500 and status != 504
+                if attempt < retries and retryable:
+                    wait = 10 * attempt
+                    click.echo(f"      [RETRY] HTTP {status} — waiting {wait}s then retry {attempt}/{retries}")
+                    click.echo(f"      [DEBUG] Response: {body}")
+                    time.sleep(wait)
+                else:
+                    if status == 504:
+                        click.echo(f"      [ERROR] HTTP 504 timeout — batch may be too large. Try lowering batch_max_lines in config.yml")
+                    else:
+                        click.echo(f"      [ERROR] HTTP {status}: {body}")
+                    raise
+            except (httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.ConnectError) as e:
+                if attempt < retries:
+                    wait = 10 * attempt
+                    click.echo(f"      [RETRY] {type(e).__name__} — waiting {wait}s then retry {attempt}/{retries}")
+                    time.sleep(wait)
+                else:
+                    raise
 
     def _extract_json(self, text: str) -> str:
         """Extract JSON from markdown code blocks or raw text."""
@@ -49,10 +85,33 @@ class OpenAICompatProvider(BaseProvider):
         m = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
         if m:
             return m.group(1).strip()
-        # Try raw JSON (array or object)
-        m = re.search(r"(\[.*\]|\{.*\})", text, re.DOTALL)
-        if m:
-            return m.group(1).strip()
+        # Try raw JSON — find first [ or { and match to its balanced closing bracket
+        for i, ch in enumerate(text):
+            if ch in ('[', '{'):
+                close = ']' if ch == '[' else '}'
+                depth = 0
+                in_string = False
+                escape = False
+                for j in range(i, len(text)):
+                    c = text[j]
+                    if escape:
+                        escape = False
+                        continue
+                    if c == '\\' and in_string:
+                        escape = True
+                        continue
+                    if c == '"' and not escape:
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
+                    if c == ch:
+                        depth += 1
+                    elif c == close:
+                        depth -= 1
+                        if depth == 0:
+                            return text[i:j+1].strip()
+                break
         return text.strip()
 
     def review(
@@ -68,14 +127,25 @@ class OpenAICompatProvider(BaseProvider):
         if previous_feedback:
             user_msg += "\n\nPrevious review feedback:\n" + json.dumps(previous_feedback, indent=2)
 
-        raw = self._chat(system_prompt, user_msg)
+        raw = self._chat(system_prompt, user_msg, prefill="[")
+        raw = "[" + raw  # prepend the prefill since API doesn't echo it
+        extracted = self._extract_json(raw)
         try:
-            data = json.loads(self._extract_json(raw))
+            data = json.loads(extracted)
         except json.JSONDecodeError:
+            click.echo(f"      [DEBUG] Failed to parse JSON from response ({len(raw)} chars)")
+            click.echo(f"      [DEBUG] Raw start: {raw[:300]}")
             return []
 
         if isinstance(data, list):
-            return [Finding.from_dict(d) for d in data]
+            findings = []
+            for d in data:
+                try:
+                    findings.append(Finding.from_dict(d))
+                except (KeyError, ValueError, TypeError, AttributeError) as e:
+                    click.echo(f"      [DEBUG] Skipped malformed finding: {e} — {d}")
+            return findings
+        click.echo(f"      [DEBUG] Response was not a list: {type(data)}")
         return []
 
     def fix(
@@ -90,7 +160,8 @@ class OpenAICompatProvider(BaseProvider):
             f"Findings to address:\n{findings_json}"
         )
 
-        raw = self._chat(system_prompt, user_msg)
+        raw = self._chat(system_prompt, user_msg, prefill="{")
+        raw = "{" + raw
         try:
             data = json.loads(self._extract_json(raw))
         except json.JSONDecodeError:
@@ -100,8 +171,19 @@ class OpenAICompatProvider(BaseProvider):
                 explanation="Failed to parse coder response",
             )
 
-        applied = data.get("applied", False)
-        fixed = data.get("fixed_content", "") if applied else file.content
+        # LLM sometimes returns a list instead of an object — take the first item
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        if not isinstance(data, dict):
+            return FixResult(
+                file=str(file.path), applied=False,
+                original=file.content, fixed=file.content,
+                explanation=f"Unexpected response type: {type(data).__name__}",
+            )
+
+        fixed_content = data.get("fixed_content", "")
+        applied = data.get("applied", False) and bool(fixed_content)
+        fixed = fixed_content if applied else file.content
         return FixResult(
             file=str(file.path),
             applied=applied,
@@ -112,7 +194,8 @@ class OpenAICompatProvider(BaseProvider):
         )
 
     def judge(self, session_history: str, system_prompt: str) -> Verdict:
-        raw = self._chat(system_prompt, session_history)
+        raw = self._chat(system_prompt, session_history, prefill="{")
+        raw = "{" + raw
         try:
             data = json.loads(self._extract_json(raw))
         except json.JSONDecodeError:
@@ -120,5 +203,14 @@ class OpenAICompatProvider(BaseProvider):
                 "status": "partial",
                 "score": 0,
                 "summary": f"Failed to parse judge response: {raw[:200]}",
+            })
+        # LLM sometimes returns a list instead of an object
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        if not isinstance(data, dict):
+            return Verdict.from_dict({
+                "status": "partial",
+                "score": 0,
+                "summary": f"Unexpected judge response type: {type(data).__name__}",
             })
         return Verdict.from_dict(data)

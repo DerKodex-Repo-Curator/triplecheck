@@ -28,6 +28,15 @@ def load_config(config_path: str | Path) -> dict:
     for key in ("roles", "models", "assignments"):
         if key not in cfg:
             raise ValueError(f"Config missing required key: {key}")
+
+    # Validate nested structure
+    if not isinstance(cfg["roles"], dict):
+        raise ValueError(f"'roles' must be a dict, got {type(cfg['roles'])}")
+    if not isinstance(cfg["models"], dict):
+        raise ValueError(f"'models' must be a dict, got {type(cfg['models'])}")
+    if not isinstance(cfg["assignments"], dict):
+        raise ValueError(f"'assignments' must be a dict, got {type(cfg['assignments'])}")
+
     return cfg
 
 
@@ -39,6 +48,11 @@ def load_prompt(role_name: str, cfg: dict, config_dir: Path) -> str:
         # Fall back to package prompts
         pkg_prompts = Path(__file__).parent / "prompts"
         prompt_file = pkg_prompts / f"{role_name}.txt"
+        if not prompt_file.exists():
+            raise FileNotFoundError(
+                f"Prompt not found for role '{role_name}'. "
+                f"Checked: {prompt_file}"
+            )
     return prompt_file.read_text()
 
 

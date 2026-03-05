@@ -6,14 +6,23 @@ import json
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import click
 
+from code_review.aggregate import (
+    ScanProgress,
+    aggregate_sessions,
+    load_scan_progress,
+    save_aggregated_report,
+    save_scan_progress,
+)
 from code_review.ci_runner import run_ci
 from code_review.file_grouper import batch_files, discover_files, load_files, smart_batch_files
 from code_review.knowledge import KnowledgeAccumulator
 from code_review.multi_pass import multi_pass_review
+from code_review.planner import print_plan, scan_repo
 from code_review.report import save_json_report, save_markdown_report
 from code_review.review_layers import run_layered_review
 from code_review.roles import load_config, load_prompt, resolve_provider
@@ -77,11 +86,12 @@ def run_pipeline(
     ci_cmd: str | None = None,
     skip_ci: bool = False,
     output_dir: Path | None = None,
+    batch_max_lines: int | None = None,
 ) -> ReviewSession:
     """Run the full review pipeline."""
     pipeline_cfg = cfg.get("pipeline", {})
     max_rounds = max_rounds or pipeline_cfg.get("max_rounds", 4)
-    batch_max = pipeline_cfg.get("batch_max_lines", 6000)
+    batch_max = batch_max_lines or pipeline_cfg.get("batch_max_lines", 6000)
     threshold = pipeline_cfg.get("severity_threshold", "warning")
     auto_style = pipeline_cfg.get("auto_style_fix", True)
     review_passes = pipeline_cfg.get("review_passes", 1)
@@ -237,8 +247,12 @@ def run_pipeline(
             rnd.fixes.append(fix)
 
             if fix.applied and fix.fixed:
-                # Write fix to disk
-                out_path = target / fname
+                # Write fix to disk (validate path stays within target)
+                out_path = (target / fname).resolve()
+                if not out_path.is_relative_to(target):
+                    click.echo(f"      BLOCKED: path escapes target dir: {fname}")
+                    fix.applied = False
+                    continue
                 out_path.write_text(fix.fixed)
                 changed_files.add(fname)
                 click.echo(f"      Applied ({fix.explanation[:60]})")
@@ -312,6 +326,11 @@ def run_pipeline(
 @click.option("--ci-cmd", default=None, help="Custom CI command")
 @click.option("--skip-ci", is_flag=True, help="Skip CI gate")
 @click.option("--output", "output_dir", default=None, type=click.Path(), help="Output directory for reports")
+@click.option("--scan", is_flag=True, help="Auto-scan mode: split repo into units and review each")
+@click.option("--plan-only", is_flag=True, help="Scan and show plan only, don't run reviews")
+@click.option("--max-units", default=None, type=int, help="Limit number of units to review (top N by priority)")
+@click.option("--resume", "resume_id", default=None, help="Resume a previous scan by its scan ID")
+@click.option("--batch-max-lines", default=None, type=int, help="Max lines per review batch (default: 1500 from config)")
 def main(
     target: str,
     config_path: str | None,
@@ -324,6 +343,11 @@ def main(
     ci_cmd: str | None,
     skip_ci: bool,
     output_dir: str | None,
+    scan: bool,
+    plan_only: bool,
+    max_units: int | None,
+    resume_id: str | None,
+    batch_max_lines: int | None,
 ) -> None:
     """Multi-agent, model-agnostic code review pipeline."""
     target_path = Path(target).resolve()
@@ -356,6 +380,122 @@ def main(
     click.echo(f"  Coder: {overrides.get('coder', cfg['assignments']['coder'])}")
     click.echo(f"  Judge: {overrides.get('judge', cfg['assignments']['judge'])}")
 
+    if scan or plan_only or resume_id:
+        # --- SCAN MODE ---
+        inc = list(include) if include else None
+        exc = list(exclude) if exclude else None
+        out = Path(output_dir) if output_dir else Path("reports")
+
+        # Resume from previous progress if --resume given
+        sessions: list[ReviewSession] = []
+        completed_names: list[str] = []
+        scan_id = resume_id or uuid.uuid4().hex[:12]
+
+        if resume_id:
+            progress = load_scan_progress(resume_id, out)
+            if progress:
+                completed_names = progress.completed_names
+                sessions = progress.sessions
+                # Restore include/exclude filters from original run
+                if progress.include and not inc:
+                    inc = progress.include
+                    click.echo(f"\n  Restored --include filters from previous run: {inc}")
+                if progress.exclude and not exc:
+                    exc = progress.exclude
+                    click.echo(f"  Restored --exclude filters from previous run: {exc}")
+                click.echo(f"\n  Resuming scan {resume_id}: {len(completed_names)} units already done")
+            else:
+                click.echo(f"\n  [WARN] No progress file found for scan {resume_id} in {out}/")
+                click.echo(f"  Starting fresh scan with ID {scan_id}")
+
+        click.echo("\n  Scanning repository...")
+        plan = scan_repo(target_path, include=inc, exclude=exc)
+        print_plan(plan)
+
+        if not plan.units:
+            click.echo("  No review units found — nothing to do.")
+            return
+
+        if plan_only:
+            click.echo("  --plan-only: stopping after plan.")
+            return
+
+        units_to_review = plan.units[:max_units] if max_units else plan.units
+
+        # Filter out already-completed units when resuming
+        if completed_names:
+            done_set = set(completed_names)
+            remaining = [u for u in units_to_review if u.name not in done_set]
+            click.echo(f"  Skipping {len(units_to_review) - len(remaining)} completed units")
+            units_to_review = remaining
+
+        total_units = len(units_to_review) + len(completed_names)
+        click.echo(f"\n  Reviewing {len(units_to_review)} remaining of {total_units} units...\n")
+        click.echo(f"  Scan ID: {scan_id} (use --resume {scan_id} if interrupted)\n")
+
+        for i, unit in enumerate(units_to_review):
+            unit_num = len(completed_names) + i + 1
+            click.echo(f"\n{'#'*60}")
+            click.echo(f"  Unit {unit_num}/{total_units}: {unit.name} ({unit.tier})")
+            click.echo(f"  {len(unit.files)} files, {unit.line_count:,} lines")
+            click.echo(f"{'#'*60}")
+
+            # Build include patterns scoped to this unit's files
+            unit_include = [str(f.relative_to(target_path)) for f in unit.files]
+
+            try:
+                session = run_pipeline(
+                    target=target_path,
+                    cfg=cfg,
+                    config_dir=config_dir,
+                    overrides=overrides,
+                    max_rounds=max_rounds,
+                    include=unit_include,
+                    exclude=exc,
+                    ci_cmd=ci_cmd,
+                    skip_ci=skip_ci,
+                    output_dir=out,
+                    batch_max_lines=batch_max_lines,
+                )
+                sessions.append(session)
+                completed_names.append(unit.name)
+            except Exception as e:
+                click.echo(f"  [ERROR] Unit {unit.name} failed: {e}")
+                failed = ReviewSession(target=str(unit.path), status="failed")
+                sessions.append(failed)
+                completed_names.append(unit.name)
+
+            # Save progress after each unit
+            save_scan_progress(
+                scan_id, plan, sessions, completed_names, out,
+                include=inc, exclude=exc,
+            )
+            click.echo(f"  [Progress saved] {len(completed_names)}/{total_units} units — resume with --resume {scan_id}")
+
+        # Aggregate results
+        click.echo(f"\n{'='*60}")
+        click.echo("  Aggregating scan results...")
+        click.echo(f"{'='*60}")
+
+        report = aggregate_sessions(sessions, plan, completed_unit_names=completed_names)
+        report.scan_id = scan_id
+        json_path, md_path = save_aggregated_report(report, out)
+
+        # Clean up progress file on successful completion
+        progress_file = out / f"scan_{scan_id}_progress.json"
+        if progress_file.exists():
+            progress_file.unlink()
+            click.echo("  [Cleanup] Removed progress file (scan complete)")
+
+        click.echo(f"\n  Aggregate Score: {report.aggregate_score}/10")
+        click.echo(f"  Total Findings: {report.total_findings}")
+        click.echo(f"  Total Fixes: {report.total_fixes}")
+        click.echo(f"\n  Scan reports saved:")
+        click.echo(f"    {json_path}")
+        click.echo(f"    {md_path}")
+        return
+
+    # --- SINGLE TARGET MODE (existing flow) ---
     session = run_pipeline(
         target=target_path,
         cfg=cfg,
@@ -367,6 +507,7 @@ def main(
         ci_cmd=ci_cmd,
         skip_ci=skip_ci,
         output_dir=Path(output_dir) if output_dir else None,
+        batch_max_lines=batch_max_lines,
     )
 
     # Exit code based on verdict
