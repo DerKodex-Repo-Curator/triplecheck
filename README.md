@@ -1,24 +1,22 @@
 # Code Review Loop
 
-Multi-agent, model-agnostic automated code review pipeline. Three roles (reviewer, coder, judge) iterate on your codebase until convergence — any role can be mapped to any LLM.
+Multi-agent, model-agnostic automated code review pipeline. Three LLM roles — **Reviewer** (finds issues), **Coder** (fixes code), **Judge** (final verdict) — iterate on your codebase until convergence, then you review and merge.
 
 ```
-              ┌──────────────┐
-              │  config.yml  │  role↔model mapping
-              └──────┬───────┘
-                     │
-              ┌──────▼───────┐
-              │ Orchestrator │  convergence, state, CI
-              └──────┬───────┘
-                     │
-       ┌─────────────┼─────────────┐
-       │             │             │
-  ┌────▼────┐  ┌─────▼─────┐  ┌───▼────┐
-  │Reviewer │  │   Coder   │  │ Judge  │
-  └────┬────┘  └─────┬─────┘  └───┬────┘
-       │             │             │
-   any model     any model     any model
+  Your Code ──► [ Reviewer ──► Coder ──► Tests ] × N rounds ──► Judge ──► You
+                   find bugs    fix bugs   verify                 score     merge
 ```
+
+## How It Works
+
+1. **Reviewer** reads your code, outputs a list of findings (bug, security, perf, etc.)
+2. **Coder** receives the findings, edits the actual files on disk (or rejects with reasoning)
+3. **Tests** run automatically to make sure the fix didn't break anything
+4. Back to step 1 — Reviewer checks the changed files again
+5. When the loop converges (no more issues, or max rounds), **Judge** scores the session
+6. You get a report (JSON + Markdown), review the changes, and decide whether to merge
+
+Each role can be any LLM — Claude, Codex, a local Qwen, DeepSeek, or anything with an OpenAI-compatible API.
 
 ## Install
 
@@ -29,93 +27,242 @@ pip install -e .
 
 Requires Python 3.11+. Dependencies: `pyyaml`, `httpx`, `click`.
 
+Optional (for tree-sitter dependency graph):
+```bash
+pip install -e '.[graph]'
+```
+
 ## Quick Start
 
+### Simplest usage
+
 ```bash
-# Review a project with default config
+# Review a project — tests run automatically after each fix
 code-review --target ~/work/my-project
+```
 
-# Review specific files
-code-review --target ~/work/my-project --include "*.py" --exclude "tests/*"
+This will:
+- Auto-detect your test command (pytest, go test, npm test, cargo test, make test)
+- Use the models configured in `config.yml`
+- Save reports to `./reports/`
 
-# Skip CI checks
+### Skip tests (no test suite, or testing separately)
+
+```bash
 code-review --target ~/work/my-project --skip-ci
+```
+
+### Specify a custom test command
+
+```bash
+code-review --target ~/work/my-project --ci-cmd "python -m pytest tests/ -x -q"
+```
+
+### Review specific files only
+
+```bash
+code-review --target ~/work/my-project --include "src/**/*.py" --exclude "tests/*"
+```
+
+### Use all-local models (free, unlimited)
+
+```bash
+# Requires an OpenAI-compatible server running on localhost:8000 (e.g. vLLM + Qwen)
+code-review --target ~/work/my-project \
+  --reviewer qwen-local --coder qwen-local --judge qwen-local
+```
+
+### Mix models per role
+
+```bash
+# Cheap local model fixes code, expensive Claude judges quality
+code-review --target . \
+  --reviewer qwen-local --coder qwen-local --judge claude-opus
+```
+
+### Strict mode — only fix errors, limit rounds
+
+```bash
+code-review --target . --max-rounds 2
 ```
 
 ## Configuration
 
-All configuration lives in `config.yml`. There are four sections:
-
-### 1. Roles
-
-Define the three pipeline roles and their system prompts:
+All configuration lives in `config.yml`:
 
 ```yaml
-roles:
-  reviewer:
-    description: "Senior code reviewer"
-    prompt_file: prompts/reviewer.txt
-  coder:
-    description: "Expert developer"
-    prompt_file: prompts/coder.txt
-  judge:
-    description: "Final arbiter"
-    prompt_file: prompts/judge.txt
-```
-
-Custom prompts: edit the files in `prompts/` or point `prompt_file` to your own.
-
-### 2. Models
-
-Define available LLMs. Three provider types are supported:
-
-```yaml
+# 1. Define available LLMs
 models:
-  # claude -p CLI
   claude-opus:
     provider: claude-cli
-    model: opus                    # opus | sonnet | haiku
-
-  # codex CLI
-  codex:
-    provider: codex-cli
-
-  # Any OpenAI-compatible API (vLLM, Qwen, DeepSeek, OpenRouter, etc.)
+    model: opus
   qwen-local:
     provider: openai-compat
     base_url: http://localhost:8000
     model: qwen3.5
     max_tokens: 8192
     temperature: 0.1
-
-  # Remote API with auth
   deepseek:
     provider: openai-compat
     base_url: https://api.deepseek.com
     model: deepseek-coder
-    api_key_env: DEEPSEEK_API_KEY  # reads from this env var
+    api_key_env: DEEPSEEK_API_KEY
+
+# 2. Assign roles to models (the only part you usually change)
+assignments:
+  reviewer: qwen-local
+  coder: qwen-local
+  judge: claude-opus
+
+# 3. Pipeline behavior
+pipeline:
+  max_rounds: 4              # max review-fix iterations
+  batch_max_lines: 6000      # split large projects into batches
+  severity_threshold: warning # only fix issues at this level or above
+                              # options: error | warning | suggestion
+  auto_style_fix: true        # run ruff/black after each fix round
 ```
 
-### 3. Assignments
+### Provider types
 
-Map roles to models. This is the only section you need to change to swap models:
+| Provider | Config key | What it calls |
+|----------|-----------|---------------|
+| Claude CLI | `claude-cli` | `claude -p --model opus` (or sonnet/haiku) |
+| Codex CLI | `codex-cli` | `codex --quiet --full-auto` |
+| OpenAI-compatible | `openai-compat` | Any `/v1/chat/completions` endpoint (vLLM, Qwen, DeepSeek, OpenRouter, Ollama, etc.) |
+
+### Custom prompts
+
+Each role has a system prompt in `code_review/prompts/`. Edit them or point to your own:
 
 ```yaml
-assignments:
-  reviewer: codex          # codex reviews the code
-  coder: qwen-local        # local model applies fixes
-  judge: claude-opus       # claude makes final judgment
+roles:
+  reviewer:
+    prompt_file: my_prompts/reviewer.txt
 ```
 
-### 4. Pipeline Settings
+## Test Gate (CI)
+
+After each fix round, the pipeline automatically runs your project's tests to catch regressions:
+
+| Project file detected | Command run |
+|----------------------|-------------|
+| `pyproject.toml` or `setup.py` | `pytest` |
+| `go.mod` | `go test ./...` |
+| `package.json` | `npm test` |
+| `Cargo.toml` | `cargo test` |
+| `Makefile` | `make test` |
+
+If tests fail, the round stops immediately — no further damage.
+
+**Options:**
+- `--skip-ci` — skip test gate entirely (useful when no test suite exists)
+- `--ci-cmd "your command"` — override auto-detection with a custom command
+
+## Review Modes
+
+Three mutually exclusive strategies. Choose one in `config.yml`:
+
+### A) Single Pass (default)
 
 ```yaml
 pipeline:
-  max_rounds: 4              # max review-fix iterations
-  batch_max_lines: 6000      # split large projects into batches of this size
-  severity_threshold: warning # only fix findings at this level or above
-                              # options: error | warning | suggestion
-  auto_style_fix: true        # run ruff/black after each coder round
+  review_passes: 1
+```
+
+One straightforward pass over all files. Fast, good for small projects.
+
+### B) Multi-Pass with Vote Aggregation
+
+```yaml
+pipeline:
+  review_passes: 3          # run 3 passes
+  review_min_votes: 2        # need 2+ passes to agree for high confidence
+  only_high_confidence: true # only send high-confidence findings to coder
+```
+
+Each pass uses a different focus angle (bugs, security, error handling, performance, concurrency) and shuffles file order to reduce position bias. Findings are deduplicated and voted on — only issues flagged by multiple passes get marked "high confidence" and sent to the coder. Low-confidence findings still appear in the report for human review.
+
+Best for: **thorough review with a free local model** — run 5 passes, let the votes filter noise.
+
+### C) Layered Review
+
+```yaml
+pipeline:
+  review_layers:
+    - architecture   # only sees imports → finds circular deps, layering violations
+    - interface      # only sees signatures → finds API inconsistencies
+    - logic          # sees full code → finds bugs, edge cases
+    - security       # sees full code + data flow → finds vulnerabilities
+```
+
+Each layer sees only the relevant context (trimmed by the tool, not by the LLM). Upper layer findings are injected into lower layers so they don't repeat. Pick any subset of layers.
+
+Best for: **large codebases** where you want structured, non-overlapping coverage.
+
+## Enhancements
+
+These are independent features you can enable on top of any review mode:
+
+### Static Analysis Pre-screening
+
+```yaml
+pipeline:
+  static_analysis: true
+```
+
+Runs linters before the LLM review:
+- **Python:** ruff
+- **Go:** golangci-lint, go vet
+- **JS/TS:** eslint
+
+Lint findings go directly into the report (not sent to coder for fixing). The LLM reviewer is told about them so it can focus on deeper issues that linters can't catch.
+
+Gracefully skipped if tools aren't installed.
+
+### Cross-Round Knowledge
+
+```yaml
+pipeline:
+  knowledge_accumulation: true
+```
+
+After each round, the system extracts recurring patterns from findings (e.g., "missing error check appears in 8 files"). These patterns are injected into the reviewer's prompt in the next round, so it knows what to look for.
+
+### Smart File Grouping (Tree-sitter)
+
+```yaml
+pipeline:
+  smart_grouping: true
+```
+
+Requires: `pip install -e '.[graph]'`
+
+Uses tree-sitter to parse Go and Python files, builds a dependency graph, and batches files that call each other into the same LLM request. This way the reviewer sees related code together instead of arbitrary splits by line count.
+
+Falls back to line-count batching if tree-sitter isn't installed.
+
+## Full Config Reference
+
+```yaml
+pipeline:
+  # Core
+  max_rounds: 4
+  batch_max_lines: 6000
+  severity_threshold: warning  # error | warning | suggestion
+  auto_style_fix: true
+
+  # Review mode (pick one)
+  review_passes: 3             # >1 enables multi-pass (default: 1)
+  review_min_votes: 2          # votes needed for high confidence
+  only_high_confidence: true   # filter low-confidence from coder
+  review_layers: []            # non-empty enables layered review
+                               # e.g. [architecture, interface, logic, security]
+
+  # Enhancements (stackable)
+  static_analysis: true        # run linters before LLM review
+  knowledge_accumulation: false # accumulate patterns across rounds
+  smart_grouping: false         # tree-sitter dependency batching
 ```
 
 ## CLI Reference
@@ -126,43 +273,29 @@ code-review [OPTIONS]
 Options:
   --target PATH            Project directory to review (required)
   --config PATH            Config file path (default: ./config.yml)
-  --reviewer MODEL_NAME    Override reviewer model from config
-  --coder MODEL_NAME       Override coder model from config
-  --judge MODEL_NAME       Override judge model from config
+  --reviewer MODEL_NAME    Override reviewer model
+  --coder MODEL_NAME       Override coder model
+  --judge MODEL_NAME       Override judge model
   --max-rounds N           Override max rounds
   --include PATTERN        File glob filter (repeatable)
   --exclude PATTERN        Exclude pattern (repeatable)
-  --ci-cmd COMMAND         Custom CI command (auto-detected by default)
-  --skip-ci                Skip CI gate entirely
+  --ci-cmd COMMAND         Custom test command (auto-detected by default)
+  --skip-ci                Skip test gate entirely
   --output PATH            Output directory for reports (default: ./reports/)
   --help                   Show help
 ```
 
-### Override models per-run
+## Output
 
-No need to edit config.yml — override on the command line:
+Reports are saved to `./reports/` (or `--output`):
 
-```bash
-code-review --target . --reviewer claude-sonnet --coder deepseek --judge claude-opus
-```
-
-### Examples
-
-```bash
-# All-local review (requires OpenAI-compat server on localhost:8000)
-code-review --target ~/work/my-project \
-  --reviewer qwen-local --coder qwen-local --judge qwen-local \
-  --skip-ci
-
-# Strict mode — only fix errors, 2 rounds max
-code-review --target . --max-rounds 2
-
-# Custom CI command
-code-review --target . --ci-cmd "python3.12 -m pytest tests/ -x"
-
-# Review a single file
-code-review --target ~/work/my-project --include "src/auth.py"
-```
+- **`<session_id>.json`** — full session state (all rounds, findings, fixes, verdict)
+- **`<session_id>.md`** — human-readable report:
+  - Per-round findings table (with confidence when multi-pass)
+  - Low-confidence findings in a separate "Human Review" section
+  - Fixes applied/rejected with explanations
+  - Test results per round
+  - Judge verdict with category scores and recommendations
 
 ## Architecture
 
@@ -176,8 +309,8 @@ code-review --target ~/work/my-project --include "src/auth.py"
 │                     Swarm Review Loop                        │
 │                                                              │
 │   ┌─────────┐    ┌─────────┐    ┌─────────┐                │
-│   │Reviewer │───►│  Coder  │───►│  CI/FMT │──► next round  │
-│   │ (LLM)   │    │ (LLM)   │    │ (tools) │                │
+│   │Reviewer │───►│  Coder  │───►│  Tests  │──► next round  │
+│   │ (LLM)   │    │ (LLM)   │    │ (local) │                │
 │   └─────────┘    └─────────┘    └─────────┘                │
 │        │              │                                      │
 │        │   converge?──┘──► YES ──►┌─────────┐               │
@@ -189,98 +322,23 @@ code-review --target ~/work/my-project --include "src/auth.py"
 │   │ JSON+MD  │                                              │
 │   └──────────┘                                              │
 │                                                              │
-│   Review Modes (互斥):                                       │
-│   A) Multi-Pass: N 遍 × 不同视角 → 投票聚合                  │
-│   B) Layered:    架构 → 接口 → 逻辑 → 安全 逐层深入          │
-│   C) Single:     一遍平扫                                    │
+│   Review Modes (pick one):                                   │
+│   A) Multi-Pass — N passes × different angles → vote        │
+│   B) Layered   — architecture → interface → logic → security│
+│   C) Single    — one flat pass                              │
 │                                                              │
-│   增强 (可叠加):                                              │
-│   + Static Analysis  lint 预筛, 结果注入 prompt              │
-│   + Knowledge        跨轮 pattern 积累, 注入 prompt          │
-│   + Smart Grouping   tree-sitter 依赖图分 batch              │
+│   Enhancements (stackable):                                  │
+│   + Static Analysis — linters pre-screen                    │
+│   + Knowledge       — cross-round pattern accumulation      │
+│   + Smart Grouping  — tree-sitter dependency batching       │
 └──────────────────────────────────────────────────────────────┘
                                    │
                                    ▼
                          ┌────────────────────┐
-                         │   Human Review     │
-                         │   approve & merge  │
+                         │   You review the   │
+                         │   diff and merge   │
                          └────────────────────┘
 ```
-
-## Pipeline Flow
-
-```
-          ╔══════════════════════════╗
-          ║   code-review --target . ║
-          ╚════════════╤═════════════╝
-                       │
-          ┌────────────▼────────────┐
-          │ Round 1..N (max_rounds) │◄──────────────────────┐
-          │                         │                       │
-          │  1. Static Analysis     │  lint 预筛 (可选)     │
-          │  2. LLM Review          │  找 bug               │
-          │  3. LLM Coder           │  修 bug               │
-          │  4. Auto-Format + CI    │  验证                  │
-          │                         │                       │
-          │  converge? ─── NO ──────┼───────────────────────┘
-          │      │                  │
-          │     YES                 │
-          └──────┼──────────────────┘
-                 │
-          ┌──────▼──────┐
-          │  LLM Judge  │  评分 + verdict
-          └──────┬──────┘
-                 │
-          ┌──────▼──────┐
-          │   Reports   │  JSON + Markdown
-          └─────────────┘
-
-  收敛条件 (任一):
-  · 0 findings        · coder 全部 reject
-  · max rounds 用完   · CI 回归
-  · 振荡检测 (N 与 N-2 轮重复)
-```
-
-Each round:
-
-1. **Reviewer** analyzes files in batches, returns JSON findings with severity
-2. **Coder** fixes each file or rejects findings with reasoning
-3. **Auto-style** runs `ruff --fix` / `black` if available
-4. **CI gate** runs auto-detected tests (pytest, npm test, cargo test, etc.)
-
-The loop stops when any convergence condition is met:
-- Zero findings at or above the severity threshold
-- Max rounds reached
-- Coder rejected all findings (no progress possible)
-- CI regression (tests broke after a fix)
-- Oscillation (same finding reappears after 2 rounds)
-
-After convergence, the **Judge** evaluates all rounds and produces a verdict with scores.
-
-### Review Modes
-
-Three mutually exclusive review strategies, selected via `config.yml`:
-
-| Mode | Config | How it works |
-|------|--------|-------------|
-| **Multi-Pass** | `review_passes: 3` | N passes with different focus angles (bugs, security, error handling, perf, concurrency). Shuffle file order each pass. Vote-aggregate: findings flagged by >= `min_votes` passes = high confidence. |
-| **Layered** | `review_layers: [architecture, interface, logic, security]` | Each layer sees only relevant context (imports-only → signatures-only → full code). Upper layer findings injected into lower layers to avoid duplicates. |
-| **Single** | `review_passes: 1`, no layers | One flat pass over all files. Simple and fast. |
-
-### Enhancements (stackable on any mode)
-
-| Enhancement | Config | What it does |
-|-------------|--------|-------------|
-| **Static Analysis** | `static_analysis: true` | Runs linters (ruff, golangci-lint, go vet, eslint) before LLM review. Findings go directly to report; LLM is told to focus on deeper issues. |
-| **Knowledge** | `knowledge_accumulation: true` | Extracts recurring patterns across rounds and injects them into the next round's prompt ("this codebase tends to have X"). |
-| **Smart Grouping** | `smart_grouping: true` | Uses tree-sitter to build a dependency graph (Go + Python), batches related files together. Requires `pip install -e '.[graph]'`. |
-
-## Output
-
-Reports are saved to `./reports/` (or `--output`):
-
-- `<session_id>.json` — full session state (all rounds, findings, fixes)
-- `<session_id>.md` — markdown report with scores, findings table, verdict
 
 ## Adding a New Provider
 
