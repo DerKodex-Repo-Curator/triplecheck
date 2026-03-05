@@ -164,7 +164,82 @@ code-review --target . --ci-cmd "python3.12 -m pytest tests/ -x"
 code-review --target ~/work/my-project --include "src/auth.py"
 ```
 
+## Architecture
+
+```
+                         ┌────────────────────┐
+                         │    Your Codebase    │
+                         └─────────┬──────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────┐
+│                     Swarm Review Loop                        │
+│                                                              │
+│   ┌─────────┐    ┌─────────┐    ┌─────────┐                │
+│   │Reviewer │───►│  Coder  │───►│  CI/FMT │──► next round  │
+│   │ (LLM)   │    │ (LLM)   │    │ (tools) │                │
+│   └─────────┘    └─────────┘    └─────────┘                │
+│        │              │                                      │
+│        │   converge?──┘──► YES ──►┌─────────┐               │
+│        │                          │  Judge  │               │
+│        │                          │ (LLM)   │               │
+│        ▼                          └────┬────┘               │
+│   ┌──────────┐                        │                     │
+│   │ Reports  │◄───────────────────────┘                     │
+│   │ JSON+MD  │                                              │
+│   └──────────┘                                              │
+│                                                              │
+│   Review Modes (互斥):                                       │
+│   A) Multi-Pass: N 遍 × 不同视角 → 投票聚合                  │
+│   B) Layered:    架构 → 接口 → 逻辑 → 安全 逐层深入          │
+│   C) Single:     一遍平扫                                    │
+│                                                              │
+│   增强 (可叠加):                                              │
+│   + Static Analysis  lint 预筛, 结果注入 prompt              │
+│   + Knowledge        跨轮 pattern 积累, 注入 prompt          │
+│   + Smart Grouping   tree-sitter 依赖图分 batch              │
+└──────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+                         ┌────────────────────┐
+                         │   Human Review     │
+                         │   approve & merge  │
+                         └────────────────────┘
+```
+
 ## Pipeline Flow
+
+```
+          ╔══════════════════════════╗
+          ║   code-review --target . ║
+          ╚════════════╤═════════════╝
+                       │
+          ┌────────────▼────────────┐
+          │ Round 1..N (max_rounds) │◄──────────────────────┐
+          │                         │                       │
+          │  1. Static Analysis     │  lint 预筛 (可选)     │
+          │  2. LLM Review          │  找 bug               │
+          │  3. LLM Coder           │  修 bug               │
+          │  4. Auto-Format + CI    │  验证                  │
+          │                         │                       │
+          │  converge? ─── NO ──────┼───────────────────────┘
+          │      │                  │
+          │     YES                 │
+          └──────┼──────────────────┘
+                 │
+          ┌──────▼──────┐
+          │  LLM Judge  │  评分 + verdict
+          └──────┬──────┘
+                 │
+          ┌──────▼──────┐
+          │   Reports   │  JSON + Markdown
+          └─────────────┘
+
+  收敛条件 (任一):
+  · 0 findings        · coder 全部 reject
+  · max rounds 用完   · CI 回归
+  · 振荡检测 (N 与 N-2 轮重复)
+```
 
 Each round:
 
@@ -182,6 +257,24 @@ The loop stops when any convergence condition is met:
 
 After convergence, the **Judge** evaluates all rounds and produces a verdict with scores.
 
+### Review Modes
+
+Three mutually exclusive review strategies, selected via `config.yml`:
+
+| Mode | Config | How it works |
+|------|--------|-------------|
+| **Multi-Pass** | `review_passes: 3` | N passes with different focus angles (bugs, security, error handling, perf, concurrency). Shuffle file order each pass. Vote-aggregate: findings flagged by >= `min_votes` passes = high confidence. |
+| **Layered** | `review_layers: [architecture, interface, logic, security]` | Each layer sees only relevant context (imports-only → signatures-only → full code). Upper layer findings injected into lower layers to avoid duplicates. |
+| **Single** | `review_passes: 1`, no layers | One flat pass over all files. Simple and fast. |
+
+### Enhancements (stackable on any mode)
+
+| Enhancement | Config | What it does |
+|-------------|--------|-------------|
+| **Static Analysis** | `static_analysis: true` | Runs linters (ruff, golangci-lint, go vet, eslint) before LLM review. Findings go directly to report; LLM is told to focus on deeper issues. |
+| **Knowledge** | `knowledge_accumulation: true` | Extracts recurring patterns across rounds and injects them into the next round's prompt ("this codebase tends to have X"). |
+| **Smart Grouping** | `smart_grouping: true` | Uses tree-sitter to build a dependency graph (Go + Python), batches related files together. Requires `pip install -e '.[graph]'`. |
+
 ## Output
 
 Reports are saved to `./reports/` (or `--output`):
@@ -195,4 +288,3 @@ Reports are saved to `./reports/` (or `--output`):
 2. Subclass `BaseProvider` and implement `review()`, `fix()`, `judge()`
 3. Register in `code_review/roles.py` → `PROVIDER_MAP`
 4. Add model entries in `config.yml` with `provider: my-provider`
-# code-review-loop

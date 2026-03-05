@@ -48,13 +48,37 @@ def generate_markdown_report(session: ReviewSession) -> str:
             lines.append(f"**Findings:** {len(rnd.findings)} ({errors} errors, {warnings} warnings, {suggestions} suggestions)")
             lines.append("")
 
-            lines.append("| File | Line | Severity | Category | Message |")
-            lines.append("|------|------|----------|----------|---------|")
-            for f in rnd.findings:
-                lines.append(
-                    f"| `{f.file}` | {f.line} | {f.severity.value} | {f.category} | {f.message} |"
-                )
-            lines.append("")
+            high_conf = [f for f in rnd.findings if f.confidence == "high"]
+            low_conf = [f for f in rnd.findings if f.confidence == "low"]
+            has_confidence_split = bool(low_conf)
+
+            if high_conf:
+                if has_confidence_split:
+                    lines.append("| File | Line | Severity | Category | Confidence | Message |")
+                    lines.append("|------|------|----------|----------|------------|---------|")
+                    for f in high_conf:
+                        lines.append(
+                            f"| `{f.file}` | {f.line} | {f.severity.value} | {f.category} | {f.confidence} | {f.message} |"
+                        )
+                else:
+                    lines.append("| File | Line | Severity | Category | Message |")
+                    lines.append("|------|------|----------|----------|---------|")
+                    for f in high_conf:
+                        lines.append(
+                            f"| `{f.file}` | {f.line} | {f.severity.value} | {f.category} | {f.message} |"
+                        )
+                lines.append("")
+
+            if low_conf:
+                lines.append("### Low Confidence (Human Review)")
+                lines.append("")
+                lines.append("| File | Line | Severity | Category | Message |")
+                lines.append("|------|------|----------|----------|---------|")
+                for f in low_conf:
+                    lines.append(
+                        f"| `{f.file}` | {f.line} | {f.severity.value} | {f.category} | {f.message} |"
+                    )
+                lines.append("")
 
         if rnd.fixes:
             applied = sum(1 for f in rnd.fixes if f.applied)

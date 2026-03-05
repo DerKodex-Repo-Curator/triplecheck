@@ -9,6 +9,9 @@ dependencies = [
     "click>=8.0",
 ]
 
+[project.optional-dependencies]
+graph = ["tree-sitter>=0.21", "tree-sitter-python>=0.21", "tree-sitter-go>=0.21", "networkx>=3.0"]
+
 [project.scripts]
 code-review = "code_review.cli:main"
 

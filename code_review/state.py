@@ -47,9 +47,12 @@ class Finding:
     category: str
     message: str
     suggestion: str = ""
+    confidence: str = "high"  # high | low
+    source: str = "reviewer"  # reviewer | static_analysis | layer_<name>
+    pass_ids: list[int] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "file": self.file,
             "line": self.line,
             "severity": self.severity.value,
@@ -57,6 +60,13 @@ class Finding:
             "message": self.message,
             "suggestion": self.suggestion,
         }
+        if self.confidence != "high":
+            d["confidence"] = self.confidence
+        if self.source != "reviewer":
+            d["source"] = self.source
+        if self.pass_ids:
+            d["pass_ids"] = self.pass_ids
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> Finding:
@@ -67,6 +77,9 @@ class Finding:
             category=d.get("category", "general"),
             message=d["message"],
             suggestion=d.get("suggestion", ""),
+            confidence=d.get("confidence", "high"),
+            source=d.get("source", "reviewer"),
+            pass_ids=d.get("pass_ids", []),
         )
 
 

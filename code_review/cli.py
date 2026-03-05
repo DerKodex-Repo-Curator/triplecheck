@@ -11,9 +11,16 @@ from pathlib import Path
 import click
 
 from code_review.ci_runner import run_ci
-from code_review.file_grouper import batch_files, discover_files, load_files
+from code_review.file_grouper import batch_files, discover_files, load_files, smart_batch_files
+from code_review.knowledge import KnowledgeAccumulator
+from code_review.multi_pass import multi_pass_review
 from code_review.report import save_json_report, save_markdown_report
+from code_review.review_layers import run_layered_review
 from code_review.roles import load_config, load_prompt, resolve_provider
+from code_review.static_analysis import (
+    format_static_findings_for_prompt,
+    run_static_analysis,
+)
 from code_review.state import (
     FileContent,
     Finding,
@@ -77,6 +84,13 @@ def run_pipeline(
     batch_max = pipeline_cfg.get("batch_max_lines", 6000)
     threshold = pipeline_cfg.get("severity_threshold", "warning")
     auto_style = pipeline_cfg.get("auto_style_fix", True)
+    review_passes = pipeline_cfg.get("review_passes", 1)
+    review_min_votes = pipeline_cfg.get("review_min_votes", 2)
+    only_high_confidence = pipeline_cfg.get("only_high_confidence", True)
+    static_analysis_enabled = pipeline_cfg.get("static_analysis", False)
+    review_layers = pipeline_cfg.get("review_layers", [])
+    knowledge_enabled = pipeline_cfg.get("knowledge_accumulation", False)
+    smart_grouping = pipeline_cfg.get("smart_grouping", False)
     gate_severities = _severity_gate(threshold)
 
     # Resolve providers
@@ -98,6 +112,9 @@ def run_pipeline(
     # Track changed files for subsequent rounds
     changed_files: set[str] | None = None  # None = review all files
 
+    # Knowledge accumulator (P4)
+    knowledge = KnowledgeAccumulator() if knowledge_enabled else None
+
     for round_num in range(1, max_rounds + 1):
         click.echo(f"\n{'='*60}")
         click.echo(f"  Round {round_num}/{max_rounds}")
@@ -118,25 +135,78 @@ def run_pipeline(
 
         click.echo(f"  Files to review: {len(all_files)}")
 
+        # --- KNOWLEDGE INJECTION (P4) ---
+        effective_reviewer_prompt = reviewer_prompt
+        if knowledge and knowledge.patterns:
+            knowledge_context = knowledge.get_prompt_context()
+            effective_reviewer_prompt = reviewer_prompt + knowledge_context
+
+        # --- STATIC ANALYSIS PHASE (P1) ---
+        static_findings: list[Finding] = []
+        if static_analysis_enabled:
+            click.echo("  [Static Analysis] Running...")
+            static_findings = run_static_analysis(target, all_files)
+            if static_findings:
+                static_context = format_static_findings_for_prompt(static_findings)
+                effective_reviewer_prompt += static_context
+
         # --- REVIEW PHASE ---
-        click.echo("  [Reviewer] Analyzing...")
-        batches = batch_files(all_files, max_lines=batch_max)
         previous_feedback = None
         if session.rounds:
             previous_feedback = [
                 f.to_dict() for f in session.rounds[-1].findings
             ]
 
-        all_findings: list[Finding] = []
-        for i, batch in enumerate(batches):
-            click.echo(f"    Batch {i+1}/{len(batches)} ({len(batch)} files)...")
-            findings = reviewer.review(batch, reviewer_prompt, previous_feedback)
-            all_findings.extend(findings)
+        if review_layers:
+            # Layered review (P2) — mutually exclusive with flat/multi-pass
+            click.echo(f"  [Layered Review] Running layers: {', '.join(review_layers)}")
+            all_findings = run_layered_review(
+                reviewer=reviewer,
+                files=all_files,
+                layers=review_layers,
+                batch_max_lines=batch_max,
+                previous_feedback=previous_feedback,
+            )
+        elif review_passes > 1:
+            click.echo("  [Reviewer] Multi-pass analyzing...")
+            all_findings = multi_pass_review(
+                reviewer=reviewer,
+                files=all_files,
+                base_prompt=effective_reviewer_prompt,
+                num_passes=review_passes,
+                batch_max_lines=batch_max,
+                min_votes=review_min_votes,
+                previous_feedback=previous_feedback,
+            )
+        else:
+            click.echo("  [Reviewer] Analyzing...")
+            if smart_grouping:
+                batches = smart_batch_files(all_files, target, max_lines=batch_max)
+            else:
+                batches = batch_files(all_files, max_lines=batch_max)
+            all_findings: list[Finding] = []
+            for i, batch in enumerate(batches):
+                click.echo(f"    Batch {i+1}/{len(batches)} ({len(batch)} files)...")
+                findings = reviewer.review(batch, effective_reviewer_prompt, previous_feedback)
+                all_findings.extend(findings)
 
-        # Filter by severity threshold
-        gated = [f for f in all_findings if f.severity.value in gate_severities]
+        # Merge static analysis findings into all_findings
+        if static_findings:
+            all_findings.extend(static_findings)
+
+        # Filter by severity threshold + confidence (exclude static_analysis from coder)
+        gated = [
+            f for f in all_findings
+            if f.severity.value in gate_severities and f.source != "static_analysis"
+        ]
+        if only_high_confidence and review_passes > 1 and not review_layers:
+            gated = [f for f in gated if f.confidence == "high"]
         rnd.findings = all_findings
         click.echo(f"  [Reviewer] {len(all_findings)} findings ({len(gated)} at/above threshold)")
+
+        # --- KNOWLEDGE ACCUMULATION (P4) ---
+        if knowledge:
+            knowledge.ingest_round(all_findings)
 
         # --- CONVERGENCE CHECK: zero gated findings ---
         if not gated:

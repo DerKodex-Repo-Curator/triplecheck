@@ -6,6 +6,8 @@ import fnmatch
 import subprocess
 from pathlib import Path
 
+import click
+
 from code_review.state import FileContent
 
 
@@ -110,3 +112,26 @@ def batch_files(
         batches.append(current_batch)
 
     return batches
+
+
+def smart_batch_files(
+    files: list[FileContent],
+    target: Path,
+    max_lines: int = 6000,
+) -> list[list[FileContent]]:
+    """Batch files using dependency graph when available, fallback to line count.
+
+    Tries to use tree-sitter based smart batching. If tree-sitter
+    dependencies are not installed, falls back to simple line-count batching.
+    """
+    try:
+        from code_review.code_graph import smart_batch
+        result = smart_batch(files, target, max_lines)
+        click.echo(f"    Smart grouping: {len(result)} batches (dependency-aware)")
+        return result
+    except ImportError:
+        click.echo("    Smart grouping unavailable (install with: pip install -e '.[graph]')")
+        return batch_files(files, max_lines)
+    except Exception as e:
+        click.echo(f"    Smart grouping failed ({e}), falling back to line-count batching")
+        return batch_files(files, max_lines)
