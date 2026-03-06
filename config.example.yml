@@ -21,7 +21,7 @@ models:
   qwen-local:
     provider: openai-compat
     base_url: http://localhost:8000
-    model: /Users/raullenstudio/.lmstudio/models/lmstudio-community/Qwen3-Coder-Next-MLX-6bit
+    model: Qwen/Qwen3-Coder              # change to your model name
     max_tokens: 32768
     temperature: 0.1
     no_think: false
@@ -43,18 +43,17 @@ pipeline:
   batch_max_lines: 800
   severity_threshold: warning  # error|warning|suggestion
   auto_style_fix: true
-  # Multi-pass review (P0)
-  review_passes: 1           # number of review passes (1 = single pass)
-  review_min_votes: 1         # minimum passes that must flag a finding for high confidence
-  only_high_confidence: false # send all findings to coder
-  # Static analysis pre-screening (P1)
+  # Multi-pass review
+  review_passes: 1             # number of review passes (1 = single pass)
+  review_min_votes: 1          # minimum passes that must flag a finding for high confidence
+  only_high_confidence: false  # send all findings to coder
+  # Static analysis pre-screening
   static_analysis: true        # run linters before LLM review
-  # Layered review (P2) — mutually exclusive with multi-pass
+  # Layered review — mutually exclusive with multi-pass
   review_layers: []            # e.g. ["architecture", "interface", "logic", "security"]
-  # Knowledge accumulation (P4)
+  # Knowledge accumulation
   knowledge_accumulation: false # accumulate patterns across rounds
-  # Smart grouping (P3) — requires: pip install -e '.[graph]'
+  # Smart grouping — requires: pip install triplecheck[graph]
   smart_grouping: true         # use tree-sitter dependency graph for file batching
   # Concurrent batch review — send N batches to LLM simultaneously
-  # Requires vLLM with --continuous-batching or a cloud API
   concurrency: 1               # 1 = serial, 2-3 = parallel (only useful with cloud APIs or multi-GPU)
