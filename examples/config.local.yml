@@ -1,0 +1,44 @@
+# All-local setup — $0 cost, runs entirely on your hardware.
+# Requires an OpenAI-compatible server (vLLM, Ollama, LM Studio).
+#
+# Example:
+#   vllm serve Qwen/Qwen3-Coder --max-model-len 32768
+#   triplecheck --target ./my-project --config examples/config.local.yml --skip-ci
+
+roles:
+  reviewer:
+    description: "Senior code reviewer — finds bugs, security, correctness issues"
+    prompt_file: prompts/reviewer.txt
+  coder:
+    description: "Expert developer — applies fixes or rejects with reasoning"
+    prompt_file: prompts/coder.txt
+  judge:
+    description: "Final arbiter — evaluates all rounds, scores, verdict"
+    prompt_file: prompts/judge.txt
+
+models:
+  qwen-local:
+    provider: openai-compat
+    base_url: http://localhost:8000
+    model: Qwen/Qwen3-Coder
+    max_tokens: 16384
+    temperature: 0.1
+    no_think: false
+
+assignments:
+  reviewer: qwen-local
+  coder: qwen-local
+  judge: qwen-local
+
+pipeline:
+  max_rounds: 4
+  batch_max_lines: 800
+  severity_threshold: warning
+  auto_style_fix: true
+  review_passes: 3           # multi-pass for better accuracy with local models
+  review_min_votes: 2
+  only_high_confidence: true
+  static_analysis: true
+  knowledge_accumulation: true
+  smart_grouping: true
+  concurrency: 1

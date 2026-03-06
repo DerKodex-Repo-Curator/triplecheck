@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from code_review.state import FileContent, Finding, Severity
+from triplecheck.state import FileContent, Finding, Severity
 
 
 def run_golangci_lint(target: Path) -> list[Finding]:

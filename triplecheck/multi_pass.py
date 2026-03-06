@@ -7,8 +7,8 @@ from difflib import SequenceMatcher
 
 import click
 
-from code_review.file_grouper import batch_files
-from code_review.state import FileContent, Finding
+from triplecheck.file_grouper import batch_files
+from triplecheck.state import FileContent, Finding
 
 # Focus angles for each pass — each emphasizes different concerns
 FOCUS_ANGLES = [

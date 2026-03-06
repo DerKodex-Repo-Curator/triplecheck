@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from code_review.state import ReviewSession, Severity
+from triplecheck.state import ReviewSession, Severity
 
 
 def save_json_report(session: ReviewSession, output_dir: Path) -> Path:

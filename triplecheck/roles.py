@@ -6,10 +6,10 @@ from pathlib import Path
 
 import yaml
 
-from code_review.providers.base import BaseProvider
-from code_review.providers.claude_cli import ClaudeCLIProvider
-from code_review.providers.codex_cli import CodexCLIProvider
-from code_review.providers.openai_compat import OpenAICompatProvider
+from triplecheck.providers.base import BaseProvider
+from triplecheck.providers.claude_cli import ClaudeCLIProvider
+from triplecheck.providers.codex_cli import CodexCLIProvider
+from triplecheck.providers.openai_compat import OpenAICompatProvider
 
 PROVIDER_MAP = {
     "claude-cli": ClaudeCLIProvider,

@@ -6,8 +6,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from code_review.planner import ScanPlan
-from code_review.state import AggregatedReport, ReviewSession, Severity
+from triplecheck.planner import ScanPlan
+from triplecheck.state import AggregatedReport, ReviewSession, Severity
 
 
 def aggregate_sessions(

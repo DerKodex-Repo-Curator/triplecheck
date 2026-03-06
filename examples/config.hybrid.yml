@@ -1,0 +1,46 @@
+# Hybrid setup — local model for heavy lifting, cloud model for judging.
+# Best balance of cost and quality: reviewer/coder are free, judge is ~$0.02/session.
+#
+# Requires:
+#   - vLLM / Ollama running locally with Qwen
+#   - Claude CLI installed (claude --version)
+#
+# Example:
+#   triplecheck --target ./my-project --config examples/config.hybrid.yml --skip-ci
+
+roles:
+  reviewer:
+    description: "Senior code reviewer — finds bugs, security, correctness issues"
+    prompt_file: prompts/reviewer.txt
+  coder:
+    description: "Expert developer — applies fixes or rejects with reasoning"
+    prompt_file: prompts/coder.txt
+  judge:
+    description: "Final arbiter — evaluates all rounds, scores, verdict"
+    prompt_file: prompts/judge.txt
+
+models:
+  qwen-local:
+    provider: openai-compat
+    base_url: http://localhost:8000
+    model: Qwen/Qwen3-Coder
+    max_tokens: 16384
+    temperature: 0.1
+    no_think: false
+  claude-opus:
+    provider: claude-cli
+    model: opus
+
+assignments:
+  reviewer: qwen-local
+  coder: qwen-local
+  judge: claude-opus
+
+pipeline:
+  max_rounds: 4
+  batch_max_lines: 800
+  severity_threshold: warning
+  auto_style_fix: true
+  static_analysis: true
+  smart_grouping: true
+  concurrency: 1

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from code_review.state import FileContent, Finding, FixResult, Verdict
+from triplecheck.state import FileContent, Finding, FixResult, Verdict
 
 
 class BaseProvider(ABC):

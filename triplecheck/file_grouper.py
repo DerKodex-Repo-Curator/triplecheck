@@ -8,7 +8,7 @@ from pathlib import Path
 
 import click
 
-from code_review.state import FileContent
+from triplecheck.state import FileContent
 
 
 def discover_files(
@@ -135,7 +135,7 @@ def smart_batch_files(
     dependencies are not installed, falls back to simple line-count batching.
     """
     try:
-        from code_review.code_graph import smart_batch
+        from triplecheck.code_graph import smart_batch
         result = smart_batch(files, target, max_lines, max_files)
         click.echo(f"    Smart grouping: {len(result)} batches (dependency-aware)")
         return result

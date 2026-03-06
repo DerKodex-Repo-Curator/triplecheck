@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from code_review.file_grouper import discover_files
+from triplecheck.file_grouper import discover_files
 
 
 @dataclass

@@ -10,8 +10,8 @@ import time
 import click
 import httpx
 
-from code_review.providers.base import BaseProvider
-from code_review.state import FileContent, Finding, FixResult, Severity, Verdict
+from triplecheck.providers.base import BaseProvider
+from triplecheck.state import FileContent, Finding, FixResult, Severity, Verdict
 
 
 class OpenAICompatProvider(BaseProvider):

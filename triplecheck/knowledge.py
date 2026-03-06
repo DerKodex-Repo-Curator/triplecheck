@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
-from code_review.state import Finding
+from triplecheck.state import Finding
 
 
 @dataclass

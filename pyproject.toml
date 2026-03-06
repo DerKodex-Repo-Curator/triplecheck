@@ -1,7 +1,7 @@
 [project]
-name = "code-review-loop"
+name = "triplecheck"
 version = "0.1.0"
-description = "Multi-agent, model-agnostic automated code review pipeline"
+description = "Three AI agents review your code. Reviewer → Coder → Judge. Loop until clean."
 requires-python = ">=3.11"
 dependencies = [
     "pyyaml>=6.0",
@@ -13,10 +13,10 @@ dependencies = [
 graph = ["tree-sitter>=0.21", "tree-sitter-python>=0.21", "tree-sitter-go>=0.21", "networkx>=3.0"]
 
 [project.scripts]
-code-review = "code_review.cli:main"
+triplecheck = "triplecheck.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["code_review*"]
+include = ["triplecheck*"]
 
 [build-system]
 requires = ["setuptools>=68.0"]

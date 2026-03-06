@@ -6,7 +6,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from code_review.state import FileContent
+from triplecheck.state import FileContent
 
 # Lazy imports for optional dependencies
 _ts = None

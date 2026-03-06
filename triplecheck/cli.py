@@ -11,26 +11,26 @@ from pathlib import Path
 
 import click
 
-from code_review.aggregate import (
+from triplecheck.aggregate import (
     ScanProgress,
     aggregate_sessions,
     load_scan_progress,
     save_aggregated_report,
     save_scan_progress,
 )
-from code_review.ci_runner import run_ci
-from code_review.file_grouper import batch_files, discover_files, load_files, smart_batch_files
-from code_review.knowledge import KnowledgeAccumulator
-from code_review.multi_pass import multi_pass_review
-from code_review.planner import print_plan, scan_repo
-from code_review.report import save_json_report, save_markdown_report
-from code_review.review_layers import run_layered_review
-from code_review.roles import load_config, load_prompt, resolve_provider
-from code_review.static_analysis import (
+from triplecheck.ci_runner import run_ci
+from triplecheck.file_grouper import batch_files, discover_files, load_files, smart_batch_files
+from triplecheck.knowledge import KnowledgeAccumulator
+from triplecheck.multi_pass import multi_pass_review
+from triplecheck.planner import print_plan, scan_repo
+from triplecheck.report import save_json_report, save_markdown_report
+from triplecheck.review_layers import run_layered_review
+from triplecheck.roles import load_config, load_prompt, resolve_provider
+from triplecheck.static_analysis import (
     format_static_findings_for_prompt,
     run_static_analysis,
 )
-from code_review.state import (
+from triplecheck.state import (
     FileContent,
     Finding,
     ReviewRound,

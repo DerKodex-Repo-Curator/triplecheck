@@ -1,0 +1,47 @@
+# All-cloud setup — no local GPU needed.
+# Uses DeepSeek for reviewer/coder (fast, cheap) and Claude for judge (highest quality).
+#
+# Requires:
+#   - DEEPSEEK_API_KEY environment variable
+#   - Claude CLI installed (claude --version)
+#
+# Example:
+#   export DEEPSEEK_API_KEY=sk-...
+#   triplecheck --target ./my-project --config examples/config.cloud.yml --skip-ci
+
+roles:
+  reviewer:
+    description: "Senior code reviewer — finds bugs, security, correctness issues"
+    prompt_file: prompts/reviewer.txt
+  coder:
+    description: "Expert developer — applies fixes or rejects with reasoning"
+    prompt_file: prompts/coder.txt
+  judge:
+    description: "Final arbiter — evaluates all rounds, scores, verdict"
+    prompt_file: prompts/judge.txt
+
+models:
+  deepseek:
+    provider: openai-compat
+    base_url: https://api.deepseek.com
+    model: deepseek-coder
+    api_key_env: DEEPSEEK_API_KEY
+    max_tokens: 16384
+    temperature: 0.1
+  claude-opus:
+    provider: claude-cli
+    model: opus
+
+assignments:
+  reviewer: deepseek
+  coder: deepseek
+  judge: claude-opus
+
+pipeline:
+  max_rounds: 4
+  batch_max_lines: 800
+  severity_threshold: warning
+  auto_style_fix: true
+  static_analysis: true
+  smart_grouping: true
+  concurrency: 1

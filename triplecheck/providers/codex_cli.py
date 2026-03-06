@@ -6,8 +6,8 @@ import json
 import re
 import subprocess
 
-from code_review.providers.base import BaseProvider
-from code_review.state import FileContent, Finding, FixResult, Verdict
+from triplecheck.providers.base import BaseProvider
+from triplecheck.state import FileContent, Finding, FixResult, Verdict
 
 
 class CodexCLIProvider(BaseProvider):
