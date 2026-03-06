@@ -15,7 +15,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](https://github.com/machinefi/triplecheck/pulls)
 
-[Quick Start](#-quick-start) · [How It Works](#-how-it-works) · [Configuration](#-configuration) · [Examples](examples/)
+[Comparison](#-comparison) · [Quick Start](#-quick-start) · [How It Works](#-how-it-works) · [Configuration](#-configuration) · [Roadmap](#️-roadmap)
 
 ---
 
@@ -48,6 +48,36 @@
 | 🌐 | **Language agnostic** | Python, Go, Rust, TypeScript, Java, and more |
 | 🧠 | **Multi-pass voting** | N review passes × different angles → vote to filter noise |
 | 🔌 | **Any LLM backend** | vLLM, Ollama, LM Studio, OpenRouter, DeepSeek, OpenAI, Claude |
+
+<br>
+
+## 🏆 Comparison
+
+How triplecheck stacks up against popular AI code review tools:
+
+| | **triplecheck** | **CodeRabbit** | **PR-Agent (Qodo)** | **Sourcery** | **Ellipsis** |
+|:--|:---:|:---:|:---:|:---:|:---:|
+| **Open source** | ✅ MIT | ❌ SaaS | ✅ Apache-2.0 | ❌ Freemium | ❌ SaaS |
+| **Run locally / self-host** | ✅ | ❌ | ✅ | ❌ | ❌ |
+| **Use your own models** | ✅ Any LLM | ❌ Fixed backend | ⚠️ OpenAI/Anthropic/custom | ❌ Fixed | ❌ Fixed |
+| **$0 with local LLMs** | ✅ | ❌ $24/mo | ⚠️ Need API key | ❌ | ❌ $36/mo |
+| **Auto-fix code** | ✅ Coder agent writes patches | ⚠️ One-click suggestions | ❌ Suggestions only | ❌ Suggestions only | ✅ Implements fixes |
+| **Review → Fix → Test loop** | ✅ Multi-round | ❌ Single pass | ❌ Single pass | ❌ Single pass | ❌ Single pass |
+| **Judge / scoring** | ✅ 0–10 verdict | ❌ | ❌ | ❌ | ❌ |
+| **Multi-pass voting** | ✅ N passes, deduplicate | ❌ | ❌ | ❌ | ❌ |
+| **Layered review** | ✅ arch/interface/logic/security | ❌ | ❌ | ❌ | ❌ |
+| **CI test gate** | ✅ Auto-runs tests | ❌ | ❌ | ❌ | ❌ |
+| **Repo-wide scan** | ✅ Auto-split + resume | ❌ PR-scoped | ❌ PR-scoped | ❌ PR-scoped | ❌ PR-scoped |
+| **Tree-sitter dep graph** | ✅ Smart batching | ❌ | ❌ | ❌ | ❌ |
+| **GitHub PR integration** | 🔜 Roadmap | ✅ | ✅ | ✅ | ✅ |
+| **Incremental (diff-only)** | 🔜 Roadmap | ✅ | ✅ | ✅ | ✅ |
+| **PR summary** | 🔜 Roadmap | ✅ | ✅ | ✅ | ✅ |
+| **IDE extension** | 🔜 Roadmap | ✅ VS Code | ❌ | ✅ VS Code | ❌ |
+| **In-PR chat** | ❌ | ✅ @coderabbit | ✅ /ask | ❌ | ❌ |
+| **SAST integrations** | ⚠️ ruff/golint/eslint | ✅ 40+ tools | ⚠️ Limited | ❌ | ❌ |
+| **Learning from feedback** | ❌ | ✅ | ❌ | ✅ | ❌ |
+
+> **TL;DR** — triplecheck has the deepest review engine (multi-round fix loop, voting, layered review, test gate, judge scoring) and is the only tool that runs **100% free on your own hardware**. The gap is GitHub integration — coming soon.
 
 <br>
 
@@ -387,6 +417,33 @@ class MyProvider(BaseProvider):
 ```
 
 Then register in `triplecheck/roles.py` → `PROVIDER_MAP` and add model entries in `config.yml`.
+
+<br>
+
+## 🗺️ Roadmap
+
+### P0 — Next Up
+
+- [ ] **GitHub PR integration** — GitHub Action + post review comments via `gh api`, line-by-line annotations
+- [ ] **Incremental diff-only review** — parse `git diff`, send only changed lines + context to LLM (saves tokens, more precise)
+- [ ] **PR summary / walkthrough** — auto-generate a changelog-style summary for each review session
+
+### P1 — On Deck
+
+- [ ] **GitHub Action template** — drop-in `.github/workflows/triplecheck.yml` for any repo
+- [ ] **SARIF output** — `--format sarif` for GitHub Code Scanning / Security tab integration
+- [ ] **Repo-level config** — `.triplecheck.yml` auto-discovered in repo root
+- [ ] **Ignore rules** — `.triplecheck-ignore` to suppress known false positives by pattern
+
+### P2 — Future
+
+- [ ] **VS Code extension** — trigger review from IDE, show findings inline
+- [ ] **Web report viewer** — interactive HTML report with filtering and navigation
+- [ ] **GitLab / Bitbucket support** — platform-agnostic PR integration
+- [ ] **Semgrep integration** — custom SAST rules alongside LLM review
+- [ ] **Learning from feedback** — track dismissed findings, auto-suppress recurring false positives
+
+> Have an idea? [Open an issue](https://github.com/machinefi/triplecheck/issues) or send a PR.
 
 <br>
 
