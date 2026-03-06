@@ -10,6 +10,8 @@
 ```
 
 **Three AI agents review your code — for free, on your hardware.**
+<br>
+**Deep review, not shallow lint. Local LLMs = unlimited passes, zero cost.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
