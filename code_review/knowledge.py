@@ -36,12 +36,9 @@ def extract_patterns(
     for finding in findings:
         merged = False
         for cluster in clusters:
-            for cluster_finding in cluster:
-                if _messages_similar(finding.message, cluster_finding.message):
-                    cluster.append(finding)
-                    merged = True
-                    break
-            if merged:
+            if _messages_similar(finding.message, cluster[0].message):
+                cluster.append(finding)
+                merged = True
                 break
         if not merged:
             clusters.append([finding])
@@ -51,7 +48,7 @@ def extract_patterns(
     for cluster in clusters:
         unique_files = list({f.file for f in cluster})
         if len(unique_files) >= min_occurrences:
-            best_msg = max(cluster, key=lambda f: len(f.message)).message
+            best_msg = max(cluster, key=lambda f: len(f.message) if f.message else 0).message
             patterns.append(Pattern(
                 description=best_msg,
                 category=cluster[0].category,

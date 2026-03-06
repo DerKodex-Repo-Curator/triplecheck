@@ -85,7 +85,7 @@ def generate_markdown_report(session: ReviewSession) -> str:
             lines.append(f"**Fixes:** {applied}/{len(rnd.fixes)} applied")
             for f in rnd.fixes:
                 status = "applied" if f.applied else "rejected"
-                lines.append(f"- `{f.file}`: {status} — {f.explanation[:100]}")
+                lines.append(f"- `{f.file}`: {status} — {str(f.explanation or '')[:100]}")
             lines.append("")
 
         if rnd.ci_passed is not None:

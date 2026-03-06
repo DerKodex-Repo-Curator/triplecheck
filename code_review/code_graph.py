@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -66,10 +67,10 @@ class CodeGraph:
 
         # BFS from the symbol node
         related = set()
-        queue = [(symbol_name, 0)]
+        queue = deque([(symbol_name, 0)])
         visited = set()
         while queue:
-            node, d = queue.pop(0)
+            node, d = queue.popleft()
             if node in visited or d > depth:
                 continue
             visited.add(node)
@@ -370,16 +371,21 @@ def smart_batch(
         comp_id = file_to_component.get(str(f.path), -1)
         component_files.setdefault(comp_id, []).append(f)
 
+    # Pre-compute line counts for all components
+    component_lines: dict[int, int] = {}
+    for comp_id, comp_files in component_files.items():
+        component_lines[comp_id] = sum(f.content.count("\n") + 1 for f in comp_files)
+
     # Pack components into batches respecting max_lines
     batches: list[list[FileContent]] = []
     current_batch: list[FileContent] = []
     current_lines = 0
 
     for comp_id in sorted(component_files.keys(),
-                          key=lambda c: sum(f.content.count("\n") + 1 for f in component_files[c]),
+                          key=lambda c: component_lines[c],
                           reverse=True):
         comp_files = component_files[comp_id]
-        comp_lines = sum(f.content.count("\n") + 1 for f in comp_files)
+        comp_lines = component_lines[comp_id]
 
         if comp_lines > max_lines or len(comp_files) > max_files:
             # Component too large — split it

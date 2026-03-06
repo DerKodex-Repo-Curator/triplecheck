@@ -44,10 +44,13 @@ def load_prompt(role_name: str, cfg: dict, config_dir: Path) -> str:
     """Load the system prompt for a role."""
     role_cfg = cfg["roles"][role_name]
     prompt_file = config_dir / role_cfg["prompt_file"]
+    if not str(prompt_file.resolve()).startswith(str(config_dir.resolve())):
+        raise ValueError(f'Invalid prompt_file path: {role_cfg["prompt_file"]}')
     if not prompt_file.exists():
         # Fall back to package prompts
         pkg_prompts = Path(__file__).parent / "prompts"
-        prompt_file = pkg_prompts / f"{role_name}.txt"
+        safe_role_name = Path(role_name).name
+        prompt_file = pkg_prompts / f"{safe_role_name}.txt"
         if not prompt_file.exists():
             raise FileNotFoundError(
                 f"Prompt not found for role '{role_name}'. "
@@ -79,6 +82,11 @@ def resolve_provider(
         )
 
     model_cfg = cfg["models"][model_name]
+    if not isinstance(model_cfg, dict):
+        raise ValueError(
+            f"Model configuration for '{model_name}' must be a dictionary, "
+            f"got {type(model_cfg)}"
+        )
     provider_name = model_cfg.get("provider", "openai-compat")
 
     if provider_name not in PROVIDER_MAP:

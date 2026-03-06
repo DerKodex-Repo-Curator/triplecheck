@@ -101,6 +101,7 @@ def run_pipeline(
     review_layers = pipeline_cfg.get("review_layers", [])
     knowledge_enabled = pipeline_cfg.get("knowledge_accumulation", False)
     smart_grouping = pipeline_cfg.get("smart_grouping", False)
+    concurrency = pipeline_cfg.get("concurrency", 1)
     gate_severities = _severity_gate(threshold)
 
     # Resolve providers
@@ -167,6 +168,8 @@ def run_pipeline(
                 f.to_dict() for f in session.rounds[-1].findings
             ]
 
+        all_findings: list[Finding] = []
+
         if review_layers:
             # Layered review (P2) — mutually exclusive with flat/multi-pass
             click.echo(f"  [Layered Review] Running layers: {', '.join(review_layers)}")
@@ -195,10 +198,29 @@ def run_pipeline(
             else:
                 batches = batch_files(all_files, max_lines=batch_max)
             all_findings: list[Finding] = []
-            for i, batch in enumerate(batches):
-                click.echo(f"    Batch {i+1}/{len(batches)} ({len(batch)} files)...")
-                findings = reviewer.review(batch, effective_reviewer_prompt, previous_feedback)
-                all_findings.extend(findings)
+            if concurrency > 1 and len(batches) > 1:
+                import concurrent.futures
+
+                click.echo(f"    Concurrent review: {concurrency} workers")
+
+                def _review_batch(idx_batch):
+                    idx, batch = idx_batch
+                    return idx, reviewer.review(batch, effective_reviewer_prompt, previous_feedback)
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+                    futures = {
+                        pool.submit(_review_batch, (i, batch)): i
+                        for i, batch in enumerate(batches)
+                    }
+                    for future in concurrent.futures.as_completed(futures):
+                        idx, findings = future.result()
+                        click.echo(f"    Batch {idx+1}/{len(batches)} ({len(batches[idx])} files) — {len(findings)} findings")
+                        all_findings.extend(findings)
+            else:
+                for i, batch in enumerate(batches):
+                    click.echo(f"    Batch {i+1}/{len(batches)} ({len(batch)} files)...")
+                    findings = reviewer.review(batch, effective_reviewer_prompt, previous_feedback)
+                    all_findings.extend(findings)
 
         # Merge static analysis findings into all_findings
         if static_findings:
@@ -211,7 +233,7 @@ def run_pipeline(
         ]
         if only_high_confidence and review_passes > 1 and not review_layers:
             gated = [f for f in gated if f.confidence == "high"]
-        rnd.findings = all_findings
+        rnd.findings = gated
         click.echo(f"  [Reviewer] {len(all_findings)} findings ({len(gated)} at/above threshold)")
 
         # --- KNOWLEDGE ACCUMULATION (P4) ---
@@ -237,7 +259,16 @@ def run_pipeline(
         file_map = {str(fc.path): fc for fc in all_files}
 
         for fname, file_findings in findings_by_file.items():
-            fc = file_map.get(fname)
+            # Validate fname is safe
+            if Path(fname).is_absolute():
+                click.echo(f"    Skipping {fname} — absolute path not allowed")
+                continue
+            # Normalize and check for traversal
+            safe_fname = Path(fname).as_posix()
+            if '..' in safe_fname.split('/'):
+                click.echo(f"    Skipping {fname} — path traversal detected")
+                continue
+            fc = file_map.get(safe_fname)
             if fc is None:
                 click.echo(f"    Skipping {fname} — not in file list")
                 continue
@@ -331,6 +362,7 @@ def run_pipeline(
 @click.option("--max-units", default=None, type=int, help="Limit number of units to review (top N by priority)")
 @click.option("--resume", "resume_id", default=None, help="Resume a previous scan by its scan ID")
 @click.option("--batch-max-lines", default=None, type=int, help="Max lines per review batch (default: 1500 from config)")
+@click.option("--skip-tests", is_flag=True, help="Exclude test files and test directories from review")
 def main(
     target: str,
     config_path: str | None,
@@ -348,9 +380,23 @@ def main(
     max_units: int | None,
     resume_id: str | None,
     batch_max_lines: int | None,
+    skip_tests: bool,
 ) -> None:
     """Multi-agent, model-agnostic code review pipeline."""
     target_path = Path(target).resolve()
+
+    # --skip-tests: inject common test exclusion patterns
+    if skip_tests:
+        test_patterns = [
+            "*_test.go", "*_test.py", "test_*.py",
+            "test/*", "tests/*", "testing/*",
+            "e2etest/*", "testutil/*", "testdata/*",
+            "**/test/*", "**/tests/*", "**/testing/*",
+            "**/*_test.go", "**/*_test.py", "**/test_*.py",
+            "**/__tests__/*", "**/*.test.ts", "**/*.test.js",
+            "**/*.spec.ts", "**/*.spec.js",
+        ]
+        exclude = tuple(list(exclude) + test_patterns)
 
     # Find config
     if config_path:
@@ -397,10 +443,10 @@ def main(
                 completed_names = progress.completed_names
                 sessions = progress.sessions
                 # Restore include/exclude filters from original run
-                if progress.include and not inc:
+                if getattr(progress, 'include', None) and not inc:
                     inc = progress.include
                     click.echo(f"\n  Restored --include filters from previous run: {inc}")
-                if progress.exclude and not exc:
+                if getattr(progress, 'exclude', None) and not exc:
                     exc = progress.exclude
                     click.echo(f"  Restored --exclude filters from previous run: {exc}")
                 click.echo(f"\n  Resuming scan {resume_id}: {len(completed_names)} units already done")
@@ -461,7 +507,11 @@ def main(
                 completed_names.append(unit.name)
             except Exception as e:
                 click.echo(f"  [ERROR] Unit {unit.name} failed: {e}")
-                failed = ReviewSession(target=str(unit.path), status="failed")
+                failed = ReviewSession(
+                    target=str(unit.path) if hasattr(unit, 'path') else "unknown",
+                    status="failed",
+                    config_snapshot=cfg,
+                )
                 sessions.append(failed)
                 completed_names.append(unit.name)
 

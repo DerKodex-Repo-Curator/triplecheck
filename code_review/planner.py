@@ -184,9 +184,9 @@ def _merge_small_units(units: list[ReviewUnit], min_lines: int = 500) -> list[Re
     if not small:
         return large
 
-    # Build parent→unit map; use first match if multiple units share a parent
+    # Build parent→unit map for ALL units (not just large)
     parent_map: dict[str, ReviewUnit] = {}
-    for u in large:
+    for u in units:
         parent = str(Path(u.name).parent) if "/" in u.name or "\\" in u.name else "."
         if parent not in parent_map:
             parent_map[parent] = u
@@ -233,7 +233,7 @@ def _split_large_unit(unit: ReviewUnit, target: Path) -> list[ReviewUnit]:
         parts = rel.parts
         # Go one level deeper than the unit name
         unit_depth = len(Path(unit.name).parts)
-        if len(parts) > unit_depth + 1:
+        if len(parts) > unit_depth:
             sub_name = str(Path(*parts[: unit_depth + 1]))
         else:
             sub_name = unit.name

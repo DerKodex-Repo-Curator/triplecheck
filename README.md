@@ -7,16 +7,63 @@ Multi-agent, model-agnostic automated code review pipeline. Three LLM roles — 
                    find bugs    fix bugs   verify                 score     merge
 ```
 
-## How It Works
+## Core Concepts
 
-1. **Reviewer** reads your code, outputs a list of findings (bug, security, perf, etc.)
-2. **Coder** receives the findings, edits the actual files on disk (or rejects with reasoning)
-3. **Tests** run automatically to make sure the fix didn't break anything
-4. Back to step 1 — Reviewer checks the changed files again
-5. When the loop converges (no more issues, or max rounds), **Judge** scores the session
-6. You get a report (JSON + Markdown), review the changes, and decide whether to merge
+### Hierarchy (small → large)
 
-Each role can be any LLM — Claude, Codex, a local Qwen, DeepSeek, or anything with an OpenAI-compatible API.
+| Concept | What it is | Example |
+|---------|-----------|---------|
+| **Finding** | A single code issue with file, line, severity, and fix suggestion | `cli.py:475 — session.verdict may be None` |
+| **Batch** | A group of related files sent to the Reviewer in one LLM call | 3 related `.go` files, ~400 lines total |
+| **Round** | One full Reviewer → Coder → Tests cycle across all batches | Round 1: 95 findings → fix 7 files → Round 2: 0 findings → converged |
+| **Session** | A complete review of one target (multiple rounds until convergence) | Review `consensus/` → 3 rounds → Judge scores 8.5 |
+| **Unit** | A logical module in scan mode (package or directory grouping) | `iotex-core/consensus/`, `iotex-core/action/protocol/` |
+| **Scan** | A full repo-level review — splits repo into units, runs a session per unit, aggregates results | Scan `iotex-core` → 30 units → 30 sessions → aggregate report |
+
+### Three Roles
+
+| Role | Input | Output | When called |
+|------|-------|--------|-------------|
+| **Reviewer** | Batch of files + system prompt | `Finding[]` — list of issues found | Every round, once per batch |
+| **Coder** | Single file + its findings | `FixResult` — the entire fixed file (or rejection) | Every round, once per file with findings |
+| **Judge** | Full session history (all rounds, findings, fixes) | `Verdict` — score (0-10), pass/fail/partial, recommendations | Once, after the review loop converges |
+
+### Pipeline Flow
+
+```
+Scan Mode (--scan)
+ │
+ ├── Unit 1: consensus/
+ │    └── Session
+ │         ├── Round 1
+ │         │    ├── Static Analysis ──► ruff / golint findings (informational)
+ │         │    ├── Reviewer ──► Batch 1 → findings, Batch 2 → findings, ...
+ │         │    ├── Coder ──► fix file A, fix file B, reject file C
+ │         │    ├── Tests ──► pytest / go test (CI gate)
+ │         │    └── Style ──► auto-format changed files
+ │         ├── Round 2
+ │         │    ├── Reviewer ──► re-review only changed files → 0 findings
+ │         │    └── Converged!
+ │         └── Judge ──► score 8.5, status: pass
+ │
+ ├── Unit 2: action/protocol/
+ │    └── Session → Rounds → ...
+ │
+ └── Aggregate Report (merge all unit results into one report)
+```
+
+In **single-target mode** (without `--scan`), there's no unit/scan layer — it's just one session directly on the target directory.
+
+### Supporting Concepts
+
+| Concept | What it does |
+|---------|-------------|
+| **Smart Grouping** | Tree-sitter parses code, builds dependency graph, batches files that call each other together |
+| **Multi-Pass Review** | Same batch reviewed N times with different focus angles; findings are voted on and deduplicated |
+| **Layered Review** | Specialized review passes (architecture → interface → logic → security), each seeing only relevant context |
+| **Knowledge Accumulator** | Extracts recurring patterns across batches ("this codebase often misses null checks"), injects into next round's prompt |
+| **Static Analysis** | Runs linters (ruff, golint, eslint) before LLM review; findings go to report, reviewer is told to focus on deeper issues |
+| **Scan Progress** | Checkpoint file for scan mode — if a scan crashes mid-way, `--resume <scan_id>` continues from where it left off |
 
 ## Install
 
@@ -75,15 +122,31 @@ code-review --target ~/work/my-project \
 ### Mix models per role
 
 ```bash
-# Cheap local model fixes code, expensive Claude judges quality
+# Cheap local model finds and fixes, expensive Claude judges quality
 code-review --target . \
   --reviewer qwen-local --coder qwen-local --judge claude-opus
 ```
 
-### Strict mode — only fix errors, limit rounds
+### Scan a large repo
 
 ```bash
-code-review --target . --max-rounds 2
+# See how the repo will be split (instant, no LLM calls)
+code-review --target ~/work/iotex-core --scan --plan-only --include "**/*.go"
+
+# Review top 5 most important modules
+code-review --target ~/work/iotex-core --scan --max-units 5 --skip-ci \
+  --include "**/*.go" --exclude "vendor/*" --skip-tests
+
+# Full scan
+code-review --target ~/work/iotex-core --scan --skip-ci \
+  --include "**/*.go" --exclude "vendor/*" --skip-tests
+```
+
+### Resume a crashed scan
+
+```bash
+# Find the scan ID from the previous output or reports/ directory
+code-review --target ~/work/iotex-core --scan --resume abc123def456 --skip-ci
 ```
 
 ## Configuration
@@ -242,6 +305,32 @@ Uses tree-sitter to parse Go and Python files, builds a dependency graph, and ba
 
 Falls back to line-count batching if tree-sitter isn't installed.
 
+## CLI Reference
+
+```
+code-review [OPTIONS]
+
+Options:
+  --target PATH            Project directory to review (required)
+  --config PATH            Config file path (default: ./config.yml)
+  --reviewer MODEL_NAME    Override reviewer model
+  --coder MODEL_NAME       Override coder model
+  --judge MODEL_NAME       Override judge model
+  --max-rounds N           Override max rounds
+  --include PATTERN        File glob filter (repeatable)
+  --exclude PATTERN        Exclude pattern (repeatable)
+  --skip-tests             Exclude test files and directories from review
+  --ci-cmd COMMAND         Custom test command (auto-detected by default)
+  --skip-ci                Skip test gate entirely
+  --batch-max-lines N      Max lines per review batch
+  --output PATH            Output directory for reports (default: ./reports/)
+  --scan                   Auto-scan mode: split repo into units and review each
+  --plan-only              Scan and show plan only, don't run reviews
+  --max-units N            Limit number of units to review (top N by priority)
+  --resume SCAN_ID         Resume a previous scan from checkpoint
+  --help                   Show help
+```
+
 ## Full Config Reference
 
 ```yaml
@@ -265,26 +354,6 @@ pipeline:
   smart_grouping: false         # tree-sitter dependency batching
 ```
 
-## CLI Reference
-
-```
-code-review [OPTIONS]
-
-Options:
-  --target PATH            Project directory to review (required)
-  --config PATH            Config file path (default: ./config.yml)
-  --reviewer MODEL_NAME    Override reviewer model
-  --coder MODEL_NAME       Override coder model
-  --judge MODEL_NAME       Override judge model
-  --max-rounds N           Override max rounds
-  --include PATTERN        File glob filter (repeatable)
-  --exclude PATTERN        Exclude pattern (repeatable)
-  --ci-cmd COMMAND         Custom test command (auto-detected by default)
-  --skip-ci                Skip test gate entirely
-  --output PATH            Output directory for reports (default: ./reports/)
-  --help                   Show help
-```
-
 ## Output
 
 Reports are saved to `./reports/` (or `--output`):
@@ -297,6 +366,10 @@ Reports are saved to `./reports/` (or `--output`):
   - Test results per round
   - Judge verdict with category scores and recommendations
 
+In scan mode, additional aggregate reports:
+- **`scan_<scan_id>.json`** — all unit sessions combined
+- **`scan_<scan_id>.md`** — overview table, per-unit summaries, top findings, aggregate score
+
 ## Architecture
 
 ```
@@ -306,7 +379,7 @@ Reports are saved to `./reports/` (or `--output`):
                                    │
                                    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                     Swarm Review Loop                        │
+│                     Review Pipeline                          │
 │                                                              │
 │   ┌─────────┐    ┌─────────┐    ┌─────────┐                │
 │   │Reviewer │───►│  Coder  │───►│  Tests  │──► next round  │
@@ -323,9 +396,9 @@ Reports are saved to `./reports/` (or `--output`):
 │   └──────────┘                                              │
 │                                                              │
 │   Review Modes (pick one):                                   │
-│   A) Multi-Pass — N passes × different angles → vote        │
-│   B) Layered   — architecture → interface → logic → security│
-│   C) Single    — one flat pass                              │
+│   A) Single    — one flat pass                              │
+│   B) Multi-Pass — N passes × different angles → vote        │
+│   C) Layered   — architecture → interface → logic → security│
 │                                                              │
 │   Enhancements (stackable):                                  │
 │   + Static Analysis — linters pre-screen                    │

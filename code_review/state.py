@@ -70,12 +70,21 @@ class Finding:
 
     @classmethod
     def from_dict(cls, d: dict) -> Finding:
+        # Map non-standard severity values from LLMs to valid ones
+        raw_sev = d.get("severity", "warning")
+        severity_map = {
+            "error": "error", "warning": "warning", "suggestion": "suggestion",
+            "critical": "error", "high": "error", "medium": "warning",
+            "low": "suggestion", "info": "suggestion",
+            "performance": "warning", "security": "error", "bug": "error",
+        }
+        sev = severity_map.get(raw_sev, "warning")
         return cls(
             file=d["file"],
             line=d.get("line", 0),
-            severity=Severity(d.get("severity", "warning")),
+            severity=Severity(sev),
             category=d.get("category", "general"),
-            message=d["message"],
+            message=d.get("message", ""),
             suggestion=d.get("suggestion", ""),
             confidence=d.get("confidence", "high"),
             source=d.get("source", "reviewer"),
@@ -120,8 +129,17 @@ class Verdict:
 
     @classmethod
     def from_dict(cls, d: dict) -> Verdict:
+        raw_status = d.get("status", "partial")
+        status_map = {
+            "pass": "pass", "fail": "fail", "partial": "partial",
+            "passed": "pass", "failed": "fail",
+            "success": "pass", "error": "fail",
+            "running": "partial", "pending": "partial",
+            "approved": "pass", "rejected": "fail",
+        }
+        status = status_map.get(raw_status, "partial")
         return cls(
-            status=VerdictStatus(d.get("status", "partial")),
+            status=VerdictStatus(status),
             score=d.get("score", 0.0),
             summary=d.get("summary", ""),
             category_scores=d.get("category_scores", {}),
@@ -182,7 +200,7 @@ class ReviewSession:
 
     @classmethod
     def from_dict(cls, d: dict) -> ReviewSession:
-        verdict = Verdict.from_dict(d["verdict"]) if d.get("verdict") else None
+        verdict = Verdict.from_dict(d["verdict"]) if d.get("verdict") is not None else None
         return cls(
             session_id=d.get("session_id", uuid.uuid4().hex[:12]),
             target=d.get("target", ""),

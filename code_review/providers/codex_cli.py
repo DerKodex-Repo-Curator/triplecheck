@@ -17,9 +17,10 @@ class CodexCLIProvider(BaseProvider):
         super().__init__(config)
 
     def _run_codex(self, prompt: str) -> str:
-        cmd = ["codex", "--quiet", "--full-auto", prompt]
+        cmd = ["codex", "--quiet", "--full-auto"]
         result = subprocess.run(
             cmd,
+            input=prompt,
             capture_output=True,
             text=True,
             timeout=600,

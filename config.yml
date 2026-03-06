@@ -21,9 +21,10 @@ models:
   qwen-local:
     provider: openai-compat
     base_url: http://localhost:8000
-    model: /Users/raullenstudio/.lmstudio/models/mlx-community/Qwen3.5-122B-A10B-8bit
-    max_tokens: 8192
+    model: /Users/raullenstudio/.lmstudio/models/lmstudio-community/Qwen3-Coder-Next-MLX-6bit
+    max_tokens: 32768
     temperature: 0.1
+    no_think: false
   deepseek:
     provider: openai-compat
     base_url: https://api.deepseek.com
@@ -34,12 +35,12 @@ models:
 assignments:
   reviewer: qwen-local
   coder: qwen-local
-  judge: claude-opus
+  judge: qwen-local
 
 # Pipeline settings
 pipeline:
   max_rounds: 4
-  batch_max_lines: 1500
+  batch_max_lines: 800
   severity_threshold: warning  # error|warning|suggestion
   auto_style_fix: true
   # Multi-pass review (P0)
@@ -54,3 +55,6 @@ pipeline:
   knowledge_accumulation: false # accumulate patterns across rounds
   # Smart grouping (P3) — requires: pip install -e '.[graph]'
   smart_grouping: true         # use tree-sitter dependency graph for file batching
+  # Concurrent batch review — send N batches to LLM simultaneously
+  # Requires vLLM with --continuous-batching or a cloud API
+  concurrency: 1               # 1 = serial, 2-3 = parallel (only useful with cloud APIs or multi-GPU)
