@@ -13,7 +13,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-3776ab?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](https://github.com/machinefi/triplecheck/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge)](https://github.com/raullenchai/triplecheck/pulls)
 
 [Comparison](#-comparison) · [Quick Start](#-quick-start) · [How It Works](#-how-it-works) · [Configuration](#-configuration) · [Roadmap](#️-roadmap)
 
@@ -443,7 +443,7 @@ Then register in `triplecheck/roles.py` → `PROVIDER_MAP` and add model entries
 - [ ] **Semgrep integration** — custom SAST rules alongside LLM review
 - [ ] **Learning from feedback** — track dismissed findings, auto-suppress recurring false positives
 
-> Have an idea? [Open an issue](https://github.com/machinefi/triplecheck/issues) or send a PR.
+> Have an idea? [Open an issue](https://github.com/raullenchai/triplecheck/issues) or send a PR.
 
 <br>
 
@@ -453,6 +453,6 @@ Then register in `triplecheck/roles.py` → `PROVIDER_MAP` and add model entries
 
 **Built for developers who want AI code review without the invoice.**
 
-[Get Started](#-quick-start) · [Report Bug](https://github.com/machinefi/triplecheck/issues) · [Request Feature](https://github.com/machinefi/triplecheck/issues)
+[Get Started](#-quick-start) · [Report Bug](https://github.com/raullenchai/triplecheck/issues) · [Request Feature](https://github.com/raullenchai/triplecheck/issues)
 
 </div>
